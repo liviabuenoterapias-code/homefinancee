@@ -278,8 +278,20 @@ function parseReceiptText(text, filename) {
       continue;
     }
 
-    // Check for discount lines FIRST
-    if (line.match(/rabatt|neds|willys\s*plus|nedsättning/i)) {
+    // Skip price change notifications
+    if (line.match(/Nytt pris/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (price change)', startIndex, endIndex });
+      continue;
+    }
+
+    // Skip standalone "Willys Plus:" lines (discount header)
+    if (line.trim() === 'Willys Plus:') {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (discount header)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for discount/coupon lines FIRST
+    if (line.match(/rabatt|neds|willys\s*plus:|nedsättning|kupong:/i)) {
       const discountMatch = line.match(/-([\d,]+)/);
       if (discountMatch && lastItem) {
         const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
@@ -299,8 +311,8 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
-    // Now supports: JUICE 1.75L 2st*34,90 69,80 and BIG KIDS +6 ÅR 2st*20,90 41,80
-    let itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+\s\/%-]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    // Supports: +PANT ENG PET <=1L 2st*1,00 2,00, JUICE 1.75L 2st*34,90 69,80, etc.
+    let itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -323,8 +335,8 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 2: Simple format - NAME PRICE (no quantity)
-    // Now supports: FISH & CRISP 55,80, KATTMAT1,4KG 64,90, and ROSÉVIN 62,90
-    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,\s\/%-]+?)\s+([\d,]+)\s*$/i);
+    // Supports: +PANT ENG PET <=1L 1,00, FISH & CRISP 55,80, ?PPLE (encoding issue), etc.
+    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -355,7 +367,7 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 3: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
-    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -377,13 +389,22 @@ function parseReceiptText(text, filename) {
       continue;
     }
 
-    // PATTERN 4: Weight info on separate line - check next line
+    // PATTERN 4: Weight info on separate line - check next line (or next 2 lines for 3-line format)
     // Matches: "PRÄST MELLAN" followed by "0,732kg*134,90kr/kg 98,75"
+    // OR: "GOUDA 28%" + "Willys Plus:" + "1,217kg*85,90kr/kg 104,54"
     if (i + 1 < endIndex) {
-      const nextLine = lines[i + 1];
-      const weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+      let nextLine = lines[i + 1];
+      let weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
 
-      if (weightLineMatch && line.match(/^[\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,\s\/%-]+$/i)) {
+      // Check if next line is "Willys Plus:" and weight info is on i+2
+      let skipLines = 1;
+      if (!weightLineMatch && i + 2 < endIndex && nextLine?.trim() === 'Willys Plus:') {
+        nextLine = lines[i + 2];
+        weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+        skipLines = 2;
+      }
+
+      if (weightLineMatch && line.match(/^[\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+$/i)) {
         const name = line.trim();
         const weight = parseFloat(weightLineMatch[1].replace(',', '.'));
         const pricePerKg = parseFloat(weightLineMatch[2].replace(',', '.'));
@@ -398,12 +419,15 @@ function parseReceiptText(text, filename) {
         };
         receipt.items.push(lastItem);
         matched = true;
-        pattern = 'Pattern 4 (Multi-line weight)';
+        pattern = skipLines === 2 ? 'Pattern 4 (3-line weight)' : 'Pattern 4 (Multi-line weight)';
         if (debugMode) {
           receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
-          receipt.debugInfo.push({ lineNum: i + 1, line: nextLine, matched: true, pattern: 'Pattern 4 (continuation)', startIndex, endIndex });
+          if (skipLines === 2) {
+            receipt.debugInfo.push({ lineNum: i + 1, line: lines[i + 1], matched: true, pattern: 'Pattern 4 (discount header)', startIndex, endIndex });
+          }
+          receipt.debugInfo.push({ lineNum: i + skipLines, line: nextLine, matched: true, pattern: 'Pattern 4 (weight line)', startIndex, endIndex });
         }
-        i++; // Skip the next line since we consumed it
+        i += skipLines; // Skip the consumed lines
         continue;
       }
     }
