@@ -133,7 +133,7 @@ To verify the parser is working correctly:
 
 **Q: Some items still missing?**
 A: Enable debug mode to see which lines aren't matching. Common causes:
-- **Multiple items on one line** (e.g., "ITEM1 12,90 ITEM2 2st*15,00 30,00") - Cannot be automatically split. You'll need to manually add the second item after parsing.
+- **Multiple items merged on one line** - Fixed! The parser now detects page breaks and line wraps using both Y coordinate changes and X coordinate jumps. If you still see merged items, please report it.
 - **Unusual formatting** - The pattern might need adjustment for specific item formats.
 
 **Q: Swedish characters showing as "?"**
