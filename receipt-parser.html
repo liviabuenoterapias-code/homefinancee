@@ -1289,11 +1289,10 @@ function renderProductLibrary(searchFilter = '') {
       <table class="product-table">
         <thead>
           <tr>
-            <th style="width: 25%;">Original Name</th>
-            <th style="width: 30%;">Standardized Name</th>
+            <th style="width: 30%;">Original Name</th>
+            <th style="width: 35%;">Standardized Name</th>
             <th style="width: 25%;">Category</th>
             <th style="width: 10%;">Purchases</th>
-            <th style="width: 10%;">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -1333,11 +1332,6 @@ function renderProductLibrary(searchFilter = '') {
               <td>
                 <span class="product-count">${p.count}</span>
                 <div style="font-size: 11px; color: #999; margin-top: 4px;">${p.totalSpent.toFixed(0)} kr</div>
-              </td>
-              <td>
-                ${p.isCustom ? `
-                  <button class="reset-btn" onclick="resetProductMapping('${p.rawName}')">Reset</button>
-                ` : ''}
               </td>
             </tr>
           `).join('')}
@@ -1381,18 +1375,6 @@ function updateProductMapping(element) {
     }
   }
 
-  renderProductLibrary(document.getElementById('productSearch').value);
-}
-
-// Reset product mapping to default
-function resetProductMapping(rawName) {
-  if (!confirm(`Reset "${rawName}" to default mapping?`)) {
-    return;
-  }
-
-  const customMappings = loadCustomMappings();
-  delete customMappings[rawName];
-  saveCustomMappings(customMappings);
   renderProductLibrary(document.getElementById('productSearch').value);
 }
 
