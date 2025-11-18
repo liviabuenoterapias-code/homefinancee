@@ -144,14 +144,30 @@ async function processPDF(file) {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
 
+      // Add page break marker between pages
+      if (pageNum > 1) {
+        fullText += '\n';
+      }
+
       let lastY = null;
+      let lastX = null;
       textContent.items.forEach(item => {
+        const x = item.transform[4];
         const y = item.transform[5];
-        if (lastY !== null && Math.abs(y - lastY) > 2) {
-          fullText += '\n';
+
+        // Detect new line: Y coordinate changed OR X jumped back to left margin
+        if (lastY !== null) {
+          const yDiff = Math.abs(y - lastY);
+          const xJumpedBack = lastX !== null && x < lastX - 50; // X moved significantly left
+
+          if (yDiff > 2 || xJumpedBack) {
+            fullText += '\n';
+          }
         }
+
         fullText += item.str + ' ';
         lastY = y;
+        lastX = x;
       });
     }
 
