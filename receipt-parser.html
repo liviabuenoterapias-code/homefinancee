@@ -300,7 +300,7 @@ function parseReceiptText(text, filename) {
 
     // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
     // Now supports: JUICE 1.75L 2st*34,90 69,80 and BIG KIDS +6 ÅR 2st*20,90 41,80
-    let itemMatch = line.match(/^([\wåäöÅÄÖ&.+][\wåäöÅÄÖ&.+\s\/%-]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    let itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+\s\/%-]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -323,8 +323,8 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 2: Simple format - NAME PRICE (no quantity)
-    // Now supports: FISH & CRISP 55,80 and KATTMAT1,4KG KAST UT 64,90
-    itemMatch = line.match(/^([\wåäöÅÄÖ&.+,][\wåäöÅÄÖ&.+,\s\/%-]+?)\s+([\d,]+)\s*$/i);
+    // Now supports: FISH & CRISP 55,80, KATTMAT1,4KG 64,90, and ROSÉVIN 62,90
+    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,\s\/%-]+?)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -355,7 +355,7 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 3: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
-    itemMatch = line.match(/^([\wåäöÅÄÖ&.+,][\wåäöÅÄÖ&.+,\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -383,7 +383,7 @@ function parseReceiptText(text, filename) {
       const nextLine = lines[i + 1];
       const weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
 
-      if (weightLineMatch && line.match(/^[\wåäöÅÄÖ&.+,\s\/%-]+$/i)) {
+      if (weightLineMatch && line.match(/^[\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+,\s\/%-]+$/i)) {
         const name = line.trim();
         const weight = parseFloat(weightLineMatch[1].replace(',', '.'));
         const pricePerKg = parseFloat(weightLineMatch[2].replace(',', '.'));
