@@ -310,8 +310,27 @@ function parseReceiptText(text, filename) {
       continue;
     }
 
+    // Check for PANT (bottle deposit) - add to previous item, don't create new item
+    if (line.match(/^\+PANT/i)) {
+      const pantMatch = line.match(/^\+PANT.*?\s+([\d,]+)\s*$/i);
+      if (pantMatch && lastItem) {
+        const pantAmount = parseFloat(pantMatch[1].replace(',', '.'));
+        lastItem.totalPrice += pantAmount;
+        // Update unit price if quantity > 1
+        if (lastItem.quantity > 1) {
+          lastItem.unitPrice = lastItem.totalPrice / lastItem.quantity;
+        } else {
+          lastItem.unitPrice = lastItem.totalPrice;
+        }
+        matched = true;
+        pattern = 'PANT (added to previous item)';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
     // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
-    // Supports: +PANT ENG PET <=1L 2st*1,00 2,00, JUICE 1.75L 2st*34,90 69,80, etc.
+    // Supports: JUICE 1.75L 2st*34,90 69,80, BIG KIDS +6 ÅR 2st*20,90 41,80, etc.
     let itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
