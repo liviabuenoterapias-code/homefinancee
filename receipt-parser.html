@@ -827,14 +827,136 @@ function refreshAnalysis() {
       <p><strong>Period:</strong> ${summary.dateRange.start} to ${summary.dateRange.end} (${summary.monthCount} months)</p>
     </div>
 
+    <div id="trends-section"></div>
     <div id="staples-section"></div>
     <div id="categories-section"></div>
     <div id="discounts-section"></div>
   `;
 
+  renderTrends();
   renderStaples();
   renderCategories();
   renderDiscounts();
+}
+
+function renderTrends() {
+  // Get monthly spending data
+  const months = Object.keys(analysisInstance.processed.months).sort();
+  const monthlyData = months.map(month => {
+    const purchases = analysisInstance.processed.months[month];
+    const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
+    const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
+    const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
+    return {
+      month,
+      totalSpent,
+      totalSaved,
+      itemCount,
+      uniqueProducts: new Set(purchases.map(p => p.standardName)).size
+    };
+  });
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('trends-content')">
+        <span class="section-title">📈 Spending & Price Trends</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="trends-content" class="section-content">
+
+        <!-- Monthly Spending Chart -->
+        <h3 style="margin-bottom: 15px;">Monthly Spending Overview</h3>
+        <div class="chart-container" style="height: 300px;">
+          <canvas id="monthlySpendingChart"></canvas>
+        </div>
+
+        <!-- Monthly Stats Table -->
+        <table class="analysis-table" style="margin-top: 20px;">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Total Spent</th>
+              <th>Discounts</th>
+              <th>Items Purchased</th>
+              <th>Unique Products</th>
+              <th>Avg per Item</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${monthlyData.map(m => `
+              <tr>
+                <td><strong>${m.month}</strong></td>
+                <td>${m.totalSpent.toFixed(2)} kr</td>
+                <td style="color: #28a745;">-${m.totalSaved.toFixed(2)} kr</td>
+                <td>${m.itemCount}</td>
+                <td>${m.uniqueProducts}</td>
+                <td>${(m.totalSpent / m.itemCount).toFixed(2)} kr</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('trends-section').innerHTML = html;
+
+  // Create monthly spending chart
+  setTimeout(() => {
+    const ctx = document.getElementById('monthlySpendingChart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: monthlyData.map(m => m.month),
+          datasets: [
+            {
+              label: 'Total Spent (kr)',
+              data: monthlyData.map(m => m.totalSpent),
+              borderColor: '#667eea',
+              backgroundColor: 'rgba(102, 126, 234, 0.1)',
+              tension: 0.4,
+              fill: true
+            },
+            {
+              label: 'Discounts Saved (kr)',
+              data: monthlyData.map(m => m.totalSaved),
+              borderColor: '#28a745',
+              backgroundColor: 'rgba(40, 167, 69, 0.1)',
+              tension: 0.4,
+              fill: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top'
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr';
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return value + ' kr';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+  }, 100);
 }
 
 function renderStaples() {
@@ -904,6 +1026,7 @@ function renderCategories() {
               <th>Percentage</th>
               <th>Items</th>
               <th>Unique Products</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -914,17 +1037,24 @@ function renderCategories() {
                 <td>${cat.percentage.toFixed(1)}%</td>
                 <td>${cat.itemCount}</td>
                 <td>${cat.uniqueProducts}</td>
+                <td>
+                  <button class="btn" style="padding: 4px 12px; font-size: 12px;" onclick="showCategoryDetails('${cat.category}')">
+                    View Products
+                  </button>
+                </td>
               </tr>
             `).join('')}
           </tbody>
         </table>
+
+        <div id="category-details" style="margin-top: 30px;"></div>
       </div>
     </div>
   `;
 
   document.getElementById('categories-section').innerHTML = html;
 
-  // Create pie chart
+  // Create pie chart with click handler
   setTimeout(() => {
     const ctx = document.getElementById('categoryChart');
     if (ctx) {
@@ -955,6 +1085,13 @@ function renderCategories() {
                          spending[context.dataIndex].percentage.toFixed(1) + '%)';
                 }
               }
+            }
+          },
+          onClick: (event, elements) => {
+            if (elements.length > 0) {
+              const index = elements[0].index;
+              const category = spending[index].category;
+              showCategoryDetails(category);
             }
           }
         }
@@ -1108,6 +1245,84 @@ function showProductDetail(productName) {
 function closeModal() {
   document.getElementById('product-modal').style.display = 'none';
   document.getElementById('modal-overlay').style.display = 'none';
+}
+
+// Show detailed products for a category
+function showCategoryDetails(categoryName) {
+  const detailsDiv = document.getElementById('category-details');
+
+  // Get all products in this category
+  const categoryData = analysisInstance.processed.categories[categoryName];
+  if (!categoryData) {
+    detailsDiv.innerHTML = '<p style="color: #999;">No products found in this category.</p>';
+    return;
+  }
+
+  // Group by product name
+  const productMap = {};
+  categoryData.forEach(purchase => {
+    if (!productMap[purchase.standardName]) {
+      productMap[purchase.standardName] = {
+        name: purchase.standardName,
+        totalQuantity: 0,
+        totalSpent: 0,
+        totalDiscount: 0,
+        purchases: []
+      };
+    }
+    productMap[purchase.standardName].totalQuantity += purchase.quantity;
+    productMap[purchase.standardName].totalSpent += purchase.totalPrice;
+    productMap[purchase.standardName].totalDiscount += purchase.discount;
+    productMap[purchase.standardName].purchases.push(purchase);
+  });
+
+  // Convert to array and sort by spending
+  const products = Object.values(productMap).sort((a, b) => b.totalSpent - a.totalSpent);
+
+  detailsDiv.innerHTML = `
+    <div style="border-top: 2px solid #ddd; padding-top: 20px;">
+      <h3 style="color: #667eea; margin-bottom: 15px;">
+        📦 Products in "${categoryName}" Category (${products.length} products)
+      </h3>
+
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Total Qty</th>
+            <th>Total Spent</th>
+            <th>Avg Price</th>
+            <th>Purchases</th>
+            <th>Discounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${products.map(p => {
+            const avgPrice = p.totalSpent / p.totalQuantity;
+            return `
+              <tr style="cursor: pointer;" onclick="showProductDetails('${p.name}')">
+                <td><strong>${p.name}</strong></td>
+                <td>${p.totalQuantity}</td>
+                <td>${p.totalSpent.toFixed(2)} kr</td>
+                <td>${avgPrice.toFixed(2)} kr</td>
+                <td>${p.purchases.length} times</td>
+                <td style="color: ${p.totalDiscount > 0 ? '#28a745' : '#999'};">
+                  ${p.totalDiscount > 0 ? '-' + p.totalDiscount.toFixed(2) + ' kr' : 'None'}
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <p style="margin-top: 15px; font-size: 12px; color: #666; text-align: center;">
+        💡 Click on any product to see detailed price history and trends
+      </p>
+    </div>
+  `;
+
+  // Scroll to the details
+  detailsDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ===== PRODUCT LIBRARY MANAGEMENT =====
