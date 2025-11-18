@@ -278,9 +278,21 @@ function parseReceiptText(text, filename) {
       continue;
     }
 
-    // Skip price change notifications
+    // Check for "Nytt pris" - can be discount or just price change
     if (line.match(/Nytt pris/i)) {
-      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (price change)', startIndex, endIndex });
+      const discountMatch = line.match(/-([\d,]+)/);
+      if (discountMatch && lastItem) {
+        // Has negative amount = discount
+        const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
+        lastItem.discount += discount;
+        receipt.totalDiscount += discount;
+        matched = true;
+        pattern = 'Discount (Nytt pris)';
+      } else {
+        // No negative amount = just price change notification, skip it
+        pattern = 'Skipped (price change)';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
       continue;
     }
 
