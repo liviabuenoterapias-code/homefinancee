@@ -1,0 +1,166 @@
+# Grocery Receipt Parser
+
+A web-based PDF receipt parser specifically designed for Willys grocery store receipts (Swedish format).
+
+## What's Fixed
+
+The parser had issues missing many items from receipts. Here's what was improved:
+
+### Previous Problems
+1. **Regex too restrictive** - Only matched uppercase letters (A-Z), missing:
+   - Lowercase letters
+   - Swedish characters (å, ä, ö)
+   - Items starting with numbers
+   - Lines with leading whitespace
+
+2. **Section detection failures** - Rigid text matching for "självscanning" sections
+
+3. **Single pattern approach** - One rigid regex pattern couldn't handle format variations
+
+### Solutions Implemented
+
+#### 1. Multiple Pattern Support
+Now supports **3 different item formats**:
+
+- **Pattern 1**: Items with quantity
+  `ITEM NAME 2st*12,50 25,00`
+
+- **Pattern 2**: Simple items (most common)
+  `ITEM NAME 15,90`
+
+- **Pattern 3**: Weight-based items
+  `ITEM NAME 0,5kg*89,00 44,50`
+
+#### 2. Improved Character Matching
+- Uses `[\wåäöÅÄÖ]` to support Swedish characters
+- Case-insensitive matching with `/i` flag
+- Handles spaces, slashes, percentages, and hyphens in item names
+
+#### 3. Better Section Detection
+- More flexible start/end markers
+- Fallback to intelligent middle-section parsing if markers not found
+- Trims whitespace from all lines before processing
+
+#### 4. Smart Filtering
+- Skips payment lines (Betalt, Kort, Swish)
+- Skips header/separator lines
+- Validates price ranges (0.01 to 9999 kr)
+- Detects and skips total/sum lines automatically
+
+#### 5. Debug Mode
+- Toggle to see exactly which lines are matched/skipped
+- Shows which pattern matched each item
+- Displays parsing section boundaries
+- Green highlights for matches, red for misses
+
+## How to Use
+
+1. **Open the file**
+   Open `receipt-parser.html` in any modern web browser (Chrome, Firefox, Edge, Safari)
+
+2. **Enable Debug Mode (Optional)**
+   Check the "🐛 Debug Mode" checkbox to see parsing details
+
+3. **Upload PDFs**
+   - Click the upload box
+   - Select one or multiple Willys receipt PDFs
+   - The parser processes them automatically
+
+4. **Review Results**
+   - View all extracted items in tables
+   - Edit item names inline if needed
+   - Check debug info (if enabled) to see what was captured
+
+5. **Export Data**
+   Click "📊 Export All to CSV" to download all receipts as a spreadsheet
+
+## Features
+
+- ✅ **Batch processing** - Upload multiple PDFs at once
+- ✅ **Duplicate detection** - Prevents adding the same receipt twice
+- ✅ **Local storage** - Receipts saved in browser (survives page refresh)
+- ✅ **Inline editing** - Edit item names directly in the UI
+- ✅ **CSV export** - Export all data for analysis
+- ✅ **Discount tracking** - Captures Willys Plus and other discounts
+- ✅ **Statistics** - Total spent, saved, items count
+
+## Technical Details
+
+### Parser Architecture
+
+```javascript
+parseReceiptText(text, filename)
+  → Extract metadata (store, date, time, total)
+  → Detect item section boundaries
+  → Apply 3 patterns sequentially per line:
+      1. Quantity format (QTYst*PRICE)
+      2. Simple format (NAME PRICE)
+      3. Weight format (WEIGHT*PRICE/UNIT)
+  → Link discounts to previous items
+  → Return structured receipt object
+```
+
+### Regex Patterns
+
+**Pattern 1** (with quantity):
+```regex
+/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i
+```
+
+**Pattern 2** (simple):
+```regex
+/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+([\d,]+)\s*$/i
+```
+
+**Pattern 3** (weight-based):
+```regex
+/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i
+```
+
+## Testing
+
+To verify the parser is working correctly:
+
+1. Enable debug mode
+2. Upload a test receipt
+3. Check the debug section:
+   - Green = Successfully matched
+   - Red = Not matched (might be false positive or need new pattern)
+4. Verify item count matches your receipt
+5. Check that total amount matches
+
+## Common Issues
+
+**Q: Some items still missing?**
+A: Enable debug mode to see which lines aren't matching. The pattern might need adjustment for specific item formats.
+
+**Q: Wrong section being parsed?**
+A: Check debug info to see the detected section boundaries. The receipt might have unusual markers.
+
+**Q: Prices incorrect?**
+A: Verify the CSV export. If consistently wrong, check decimal separator handling (comma vs period).
+
+## Browser Compatibility
+
+- ✅ Chrome 90+
+- ✅ Firefox 88+
+- ✅ Edge 90+
+- ✅ Safari 14+
+
+Requires: ES6+ JavaScript, PDF.js library (loaded via CDN)
+
+## Data Privacy
+
+- ⚠️ All processing happens **locally in your browser**
+- ⚠️ No data is sent to any server
+- ⚠️ Data is stored in browser's localStorage only
+- ⚠️ Clear browser data to remove stored receipts
+
+## Future Improvements
+
+Possible enhancements:
+- Support for other store formats
+- OCR integration for scanned images
+- Category auto-detection
+- Price trend analysis
+- Monthly spending reports

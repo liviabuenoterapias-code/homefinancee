@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grocery Receipt Parser - Batch Mode</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea, #764ba2); padding: 20px; }
+.container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 15px; padding: 40px; }
+h1 { color: #764ba2; text-align: center; margin-bottom: 30px; }
+.upload-box { background: #f5f5f5; border: 2px dashed #667eea; padding: 40px; text-align: center; cursor: pointer; border-radius: 10px; margin-bottom: 30px; }
+.upload-box:hover { background: #e8e8e8; }
+.btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 12px 25px; border-radius: 8px; cursor: pointer; margin: 5px; font-size: 14px; }
+.btn:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-delete { background: #dc3545; }
+.btn-export { background: #28a745; padding: 15px 40px; font-size: 16px; }
+.msg { padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; font-weight: bold; }
+.success { background: #d4edda; color: #155724; }
+.error { background: #f8d7da; color: #721c24; }
+.info { background: #d1ecf1; color: #0c5460; }
+.receipt-card { background: #f9f9f9; padding: 20px; margin-bottom: 15px; border-radius: 10px; border-left: 4px solid #667eea; }
+.receipt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0; }
+.receipt-info { flex: 1; }
+.receipt-date { font-size: 18px; font-weight: bold; color: #667eea; }
+.receipt-store { color: #666; margin-top: 5px; }
+.receipt-total { font-size: 24px; font-weight: bold; color: #764ba2; margin: 0 20px; }
+.items-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.items-table th { background: #e8e8e8; padding: 10px; text-align: left; font-size: 13px; color: #666; }
+.items-table td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+.items-table input { width: 100%; padding: 5px; border: 1px solid #ddd; border-radius: 3px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+.stat-card { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 20px; border-radius: 10px; text-align: center; }
+.stat-value { font-size: 32px; font-weight: bold; }
+.stat-label { font-size: 14px; margin-top: 5px; opacity: 0.9; }
+.progress { background: #e0e0e0; height: 8px; border-radius: 4px; margin: 10px 0; overflow: hidden; }
+.progress-bar { background: #28a745; height: 100%; transition: width 0.3s; }
+#receipts { margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛒 Grocery Receipt Parser</h1>
+
+  <div style="text-align: center; margin-bottom: 20px;">
+    <label style="display: inline-flex; align-items: center; cursor: pointer; background: #f5f5f5; padding: 10px 20px; border-radius: 5px;">
+      <input type="checkbox" id="debugMode" style="margin-right: 10px;">
+      <span>🐛 Debug Mode (shows parsing details)</span>
+    </label>
+  </div>
+
+  <div class="upload-box" onclick="document.getElementById('fileInput').click()">
+    <div style="font-size: 48px; margin-bottom: 10px;">📄</div>
+    <h3>Click to Upload Multiple PDF Receipts</h3>
+    <p style="color: #666; margin-top: 10px;">Select all your Willys receipts at once</p>
+    <input type="file" id="fileInput" accept=".pdf" multiple style="display:none;">
+  </div>
+
+  <div id="statusMsg"></div>
+  <div id="progress" style="display:none;">
+    <p id="progressText" style="text-align: center; margin-bottom: 10px;">Processing receipts...</p>
+    <div class="progress">
+      <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+    </div>
+  </div>
+
+  <div id="stats" style="display:none;">
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="statReceipts">0</div>
+        <div class="stat-label">Receipts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statItems">0</div>
+        <div class="stat-label">Total Items</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statSpent">0 kr</div>
+        <div class="stat-label">Total Spent</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statSaved">0 kr</div>
+        <div class="stat-label">Total Saved</div>
+      </div>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 30px;">
+      <button class="btn btn-export" onclick="exportToCSV()">📊 Export All to CSV</button>
+      <button class="btn" onclick="clearAll()" style="background: #dc3545;">🗑️ Clear All Receipts</button>
+    </div>
+  </div>
+
+  <div id="receipts"></div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let allReceipts = [];
+
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('groceryReceipts');
+  if (saved) {
+    allReceipts = JSON.parse(saved);
+    if (allReceipts.length > 0) {
+      displayAllReceipts();
+    }
+  }
+});
+
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files).filter(f => f.type === 'application/pdf');
+  if (files.length === 0) {
+    showMessage('Please upload PDF files only', 'error');
+    return;
+  }
+
+  document.getElementById('progress').style.display = 'block';
+  document.getElementById('progressBar').style.width = '0%';
+
+  for (let i = 0; i < files.length; i++) {
+    document.getElementById('progressText').textContent = `Processing ${i + 1} of ${files.length}...`;
+    document.getElementById('progressBar').style.width = `${((i + 1) / files.length) * 100}%`;
+
+    await processPDF(files[i]);
+  }
+
+  document.getElementById('progress').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+
+  saveReceipts();
+  displayAllReceipts();
+  showMessage(`Successfully processed ${files.length} receipt(s)!`, 'success');
+});
+
+async function processPDF(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      let lastY = null;
+      textContent.items.forEach(item => {
+        const y = item.transform[5];
+        if (lastY !== null && Math.abs(y - lastY) > 2) {
+          fullText += '\n';
+        }
+        fullText += item.str + ' ';
+        lastY = y;
+      });
+    }
+
+    const receipt = parseReceiptText(fullText, file.name);
+
+    // Check if we already have this receipt (by date/time/total)
+    const exists = allReceipts.find(r =>
+      r.date === receipt.date &&
+      r.time === receipt.time &&
+      Math.abs(r.totalAmount - receipt.totalAmount) < 0.01
+    );
+
+    if (!exists) {
+      allReceipts.push(receipt);
+    } else {
+      console.log('Duplicate receipt detected, skipping');
+    }
+
+  } catch (error) {
+    console.error('Error processing', file.name, ':', error);
+  }
+}
+
+function parseReceiptText(text, filename) {
+  const receipt = {
+    id: Date.now() + Math.random(),
+    filename: filename,
+    store: '',
+    date: '',
+    time: '',
+    items: [],
+    totalAmount: 0,
+    totalDiscount: 0,
+    debugInfo: [] // For debugging
+  };
+
+  const lines = text.split('\n').map(l => l.trim());
+
+  // Extract store - look for Willys or first substantial line
+  for (let line of lines) {
+    if (line.toLowerCase().includes('willys')) {
+      receipt.store = line;
+      break;
+    }
+  }
+  if (!receipt.store) {
+    for (let line of lines) {
+      if (line && !line.includes('---') && !line.includes('===') && line.length > 2 && line.length < 50) {
+        receipt.store = line;
+        break;
+      }
+    }
+  }
+
+  // Extract date - various formats
+  const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) receipt.date = dateMatch[1];
+
+  // Extract time
+  const timeMatch = text.match(/(\d{2}:\d{2})/);
+  if (timeMatch) receipt.time = timeMatch[1];
+
+  // Extract total - more flexible
+  const totalMatch = text.match(/Totalt\s+([\d,\s]+)\s*(?:SEK|kr)?/i);
+  if (totalMatch) {
+    receipt.totalAmount = parseFloat(totalMatch[1].replace(',', '.').replace(/\s/g, ''));
+  }
+
+  // Parse items - IMPROVED SECTION DETECTION
+  let inScanSection = false;
+  let startIndex = -1;
+  let endIndex = lines.length;
+
+  // Find start and end markers more flexibly
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+
+    // Start markers
+    if (line.includes('start') && (line.includes('sj') || line.includes('scanning'))) {
+      startIndex = i + 1;
+      inScanSection = true;
+    }
+
+    // End markers
+    if (inScanSection && (line.includes('slut') || line.includes('summa') || line.includes('totalt'))) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  // If no clear section found, try to parse the whole middle section
+  if (startIndex === -1) {
+    startIndex = 5; // Skip header
+    endIndex = lines.length - 10; // Skip footer
+  }
+
+  let lastItem = null;
+  const debugMode = document.getElementById('debugMode')?.checked || false;
+
+  // IMPROVED ITEM MATCHING - Multiple patterns
+  for (let i = startIndex; i < endIndex; i++) {
+    const line = lines[i];
+    if (!line || line.length < 3) continue;
+
+    let matched = false;
+    let pattern = '';
+
+    // Skip obvious non-item lines
+    if (line.match(/^(=+|-+|Kvitto|Butik|Datum|Tid|Kassa|Org)/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (header/separator)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for discount lines FIRST
+    if (line.match(/rabatt|neds|willys\s*plus|nedsättning/i)) {
+      const discountMatch = line.match(/-([\d,]+)/);
+      if (discountMatch && lastItem) {
+        const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
+        lastItem.discount += discount;
+        receipt.totalDiscount += discount;
+        matched = true;
+        pattern = 'Discount';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // Skip payment/card lines
+    if (line.match(/betalt|kort|swish|kontant|kort\s*nr/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (payment)', startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 1: Standard format with quantity - NAME QTYst*PRICE TOTAL
+    let itemMatch = line.match(/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const qty = parseInt(itemMatch[2]);
+      const unitPrice = parseFloat(itemMatch[3].replace(',', '.'));
+      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+      lastItem = {
+        name: name,
+        quantity: qty,
+        unitPrice: unitPrice,
+        totalPrice: totalPrice,
+        discount: 0
+      };
+      receipt.items.push(lastItem);
+      matched = true;
+      pattern = 'Pattern 1 (Qty*Price)';
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 2: Simple format - NAME PRICE (no quantity)
+    itemMatch = line.match(/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const price = parseFloat(itemMatch[2].replace(',', '.'));
+
+      // Validate: name should be at least 3 chars, price should be reasonable (0.01 to 9999)
+      if (name.length >= 3 && price >= 0.01 && price <= 9999) {
+        // Skip if it looks like a total/sum line
+        if (!name.match(/^(totalt|summa|att\s*betala|moms|subtotal)/i)) {
+          lastItem = {
+            name: name,
+            quantity: 1,
+            unitPrice: price,
+            totalPrice: price,
+            discount: 0
+          };
+          receipt.items.push(lastItem);
+          matched = true;
+          pattern = 'Pattern 2 (Simple)';
+        } else {
+          pattern = 'Skipped (total line)';
+        }
+      } else {
+        pattern = 'Failed validation';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 3: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
+    itemMatch = line.match(/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const weight = parseFloat(itemMatch[2].replace(',', '.'));
+      const pricePerUnit = parseFloat(itemMatch[3].replace(',', '.'));
+      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+      lastItem = {
+        name: name + ' (' + weight + 'kg)',
+        quantity: 1,
+        unitPrice: totalPrice,
+        totalPrice: totalPrice,
+        discount: 0
+      };
+      receipt.items.push(lastItem);
+      matched = true;
+      pattern = 'Pattern 3 (Weight)';
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // No pattern matched
+    if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'No pattern matched', startIndex, endIndex });
+  }
+
+  return receipt;
+}
+
+function displayAllReceipts() {
+  if (allReceipts.length === 0) {
+    document.getElementById('stats').style.display = 'none';
+    document.getElementById('receipts').innerHTML = '';
+    return;
+  }
+
+  // Sort by date/time (newest first)
+  allReceipts.sort((a, b) => {
+    const dateA = new Date(a.date + ' ' + a.time);
+    const dateB = new Date(b.date + ' ' + b.time);
+    return dateB - dateA;
+  });
+
+  // Update stats
+  const totalItems = allReceipts.reduce((sum, r) => sum + r.items.length, 0);
+  const totalSpent = allReceipts.reduce((sum, r) => sum + r.totalAmount, 0);
+  const totalSaved = allReceipts.reduce((sum, r) => sum + r.totalDiscount, 0);
+
+  document.getElementById('statReceipts').textContent = allReceipts.length;
+  document.getElementById('statItems').textContent = totalItems;
+  document.getElementById('statSpent').textContent = totalSpent.toFixed(0) + ' kr';
+  document.getElementById('statSaved').textContent = totalSaved.toFixed(0) + ' kr';
+  document.getElementById('stats').style.display = 'block';
+
+  // Display receipts
+  const container = document.getElementById('receipts');
+  container.innerHTML = allReceipts.map((receipt, index) => `
+    <div class="receipt-card">
+      <div class="receipt-header">
+        <div class="receipt-info">
+          <div class="receipt-date">${receipt.date} ${receipt.time}</div>
+          <div class="receipt-store">${receipt.store} • ${receipt.items.length} items</div>
+        </div>
+        <div class="receipt-total">${receipt.totalAmount.toFixed(2)} kr</div>
+        <button class="btn btn-delete" onclick="deleteReceipt(${index})">🗑️ Delete</button>
+      </div>
+
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th style="width: 50%">Item Name (editable)</th>
+            <th style="width: 10%">Qty</th>
+            <th style="width: 15%">Unit Price</th>
+            <th style="width: 15%">Total</th>
+            <th style="width: 10%">Discount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${receipt.items.map((item, itemIndex) => `
+            <tr>
+              <td><input type="text" value="${item.name}" onchange="updateItemName(${index}, ${itemIndex}, this.value)"></td>
+              <td style="text-align: center;">${item.quantity}</td>
+              <td style="text-align: right;">${item.unitPrice.toFixed(2)}</td>
+              <td style="text-align: right;">${item.totalPrice.toFixed(2)}</td>
+              <td style="text-align: right;">${item.discount > 0 ? '-' + item.discount.toFixed(2) : '0.00'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      ${receipt.debugInfo && receipt.debugInfo.length > 0 ? `
+        <details style="margin-top: 15px; background: #fff3cd; padding: 15px; border-radius: 5px;">
+          <summary style="cursor: pointer; font-weight: bold; color: #856404;">🐛 Debug Info (click to expand)</summary>
+          <div style="margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;">
+            <div><strong>Section:</strong> Lines ${receipt.debugInfo[0]?.startIndex} to ${receipt.debugInfo[0]?.endIndex}</div>
+            ${receipt.debugInfo.map(info => `
+              <div style="margin-top: 5px; padding: 5px; background: ${info.matched ? '#d4edda' : '#f8d7da'};">
+                <strong>Line ${info.lineNum}:</strong> "${info.line}"
+                ${info.matched ? '✓ Matched as: ' + info.pattern : '✗ No match'}
+              </div>
+            `).join('')}
+          </div>
+        </details>
+      ` : ''}
+    </div>
+  `).join('');
+}
+
+function updateItemName(receiptIndex, itemIndex, newName) {
+  allReceipts[receiptIndex].items[itemIndex].name = newName;
+  saveReceipts();
+}
+
+function deleteReceipt(index) {
+  if (confirm('Delete this receipt?')) {
+    allReceipts.splice(index, 1);
+    saveReceipts();
+    displayAllReceipts();
+    showMessage('Receipt deleted', 'info');
+  }
+}
+
+function clearAll() {
+  if (confirm('Delete ALL receipts? This cannot be undone!')) {
+    allReceipts = [];
+    saveReceipts();
+    displayAllReceipts();
+    showMessage('All receipts cleared', 'info');
+  }
+}
+
+function saveReceipts() {
+  localStorage.setItem('groceryReceipts', JSON.stringify(allReceipts));
+}
+
+function exportToCSV() {
+  if (allReceipts.length === 0) {
+    showMessage('No receipts to export', 'error');
+    return;
+  }
+
+  let csv = 'Receipt ID,Store,Date,Time,Item Name,Quantity,Unit Price,Total Price,Discount,Receipt Total,Receipt Total Discount\n';
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      csv += `"${receipt.id}","${receipt.store}","${receipt.date}","${receipt.time}",`;
+      csv += `"${item.name}",${item.quantity},${item.unitPrice.toFixed(2)},${item.totalPrice.toFixed(2)},${item.discount.toFixed(2)},`;
+      csv += `${receipt.totalAmount.toFixed(2)},${receipt.totalDiscount.toFixed(2)}\n`;
+    });
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+
+  link.href = url;
+  link.download = `grocery_receipts_${new Date().toISOString().split('T')[0]}.csv`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  showMessage('CSV exported successfully!', 'success');
+}
+
+function showMessage(msg, type) {
+  const div = document.getElementById('statusMsg');
+  div.className = 'msg ' + type;
+  div.textContent = msg;
+  div.style.display = 'block';
+
+  setTimeout(() => {
+    div.style.display = 'none';
+  }, 5000);
+}
+</script>
+</body>
+</html>
