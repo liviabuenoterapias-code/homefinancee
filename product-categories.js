@@ -36,348 +36,348 @@ const ENCODING_FIXES = {
   'FETA 23?': 'FETA 23%'
 };
 
-// Product name standardization - maps variations to standard names
+// Product name standardization - maps variations to standard Swedish names
 const PRODUCT_MAPPING = {
-  // Dairy
-  'STANDARDMJÖLK 3%': 'Milk Standard 3%',
-  'STANDARDMJÖLK 3? 2st*22,50 45,00': 'Milk Standard 3%',
-  'MJÖLK 3? 1L': 'Milk 3%',
-  'MJÖLKCHOKLAD': 'Chocolate Milk',
+  // Mjölkprodukter (Dairy)
+  'STANDARDMJÖLK 3%': 'Standardmjölk 3%',
+  'STANDARDMJÖLK 3? 2st*22,50 45,00': 'Standardmjölk 3%',
+  'MJÖLK 3? 1L': 'Mjölk 3%',
+  'MJÖLKCHOKLAD': 'Chokladmjölk',
 
-  // Cheese
-  'PRÄST MELLAN': 'Präst Cheese Medium',
-  'PRÄST MILD': 'Präst Cheese Mild',
-  'QUATTROCENTO': 'Quattrocento Cheese',
-  'GOUDA 28%': 'Gouda Cheese',
-  'EDAMER 23%': 'Edamer Cheese',
-  'COULOMMIERS': 'Coulommiers Cheese',
-  'PHILADELPHIA VITL/ÖR': 'Philadelphia Cheese',
-  'FETAOST': 'Feta Cheese',
-  'FETA 23%': 'Feta Cheese',
-  'SKINKOST': 'Ham Cheese',
-  'BACONOST': 'Bacon Cheese',
-  'KRÄFTOST': 'Crayfish Cheese',
-  'ELD GOUDA 500G RIV': 'Gouda Shredded',
-  'ELD EDAMER 1KG SK': 'Edamer Sliced',
+  // Ost (Cheese)
+  'PRÄST MELLAN': 'Prästost Mellan',
+  'PRÄST MILD': 'Prästost Mild',
+  'QUATTROCENTO': 'Quattrocento',
+  'GOUDA 28%': 'Gouda',
+  'EDAMER 23%': 'Edamer',
+  'COULOMMIERS': 'Coulommiers',
+  'PHILADELPHIA VITL/ÖR': 'Philadelphia',
+  'FETAOST': 'Fetaost',
+  'FETA 23%': 'Fetaost',
+  'SKINKOST': 'Skinkost',
+  'BACONOST': 'Baconost',
+  'KRÄFTOST': 'Kräftost',
+  'ELD GOUDA 500G RIV': 'Riven Gouda',
+  'ELD EDAMER 1KG SK': 'Skivad Edamer',
 
-  // Butter & Spreads
-  'GÅRDSGODA SMÖR': 'Butter Gårdsgoda',
-  'BRE EXTRASALTAT 600G': 'Butter Extra Salted',
-  'PEANUT BUTTER': 'Peanut Butter',
-  'PEANUT BUTTER CREAMY': 'Peanut Butter Creamy',
+  // Smör & Pålägg (Butter & Spreads)
+  'GÅRDSGODA SMÖR': 'Smör Gårdsgoda',
+  'BRE EXTRASALTAT 600G': 'Smör Extrasaltat',
+  'PEANUT BUTTER': 'Jordnötssmör',
+  'PEANUT BUTTER CREAMY': 'Jordnötssmör Creamy',
 
-  // Bread
-  'BOSSES RÅGBRÖD 380G': 'Rye Bread Bosses',
-  'SPORTBRÖD SK 800G': 'Sport Bread',
-  'SURDEGSLIMPA FRÖ': 'Sourdough Seed',
-  'LEVAIN MEDELHAVS': 'Levain Mediterranean',
-  'LEVAINBRÖD 600G': 'Levain Bread',
+  // Bröd (Bread)
+  'BOSSES RÅGBRÖD 380G': 'Rågbröd Bosses',
+  'SPORTBRÖD SK 800G': 'Sportbröd',
+  'SURDEGSLIMPA FRÖ': 'Surdegslimpa Frö',
+  'LEVAIN MEDELHAVS': 'Levain Medelhavs',
+  'LEVAINBRÖD 600G': 'Levainbröd',
   'CIABATTA STENUGN300G': 'Ciabatta',
-  'KNÄCKEBRÖD 550G': 'Crispbread',
-  'LANTBRÖD BISTRO': 'Country Bread Bistro',
-  'GREKISKTLANTBRÖD560G': 'Greek Country Bread',
-  'FRANSKT LANTBRÖD': 'French Country Bread',
-  'SURDEGSBRÖD ITALIEN': 'Sourdough Italian',
-  'FRÖ LEVAIN 600G': 'Seed Levain',
-  'ROSTBRÖD 450G': 'Toast Bread',
+  'KNÄCKEBRÖD 550G': 'Knäckebröd',
+  'LANTBRÖD BISTRO': 'Lantbröd Bistro',
+  'GREKISKTLANTBRÖD560G': 'Grekiskt Lantbröd',
+  'FRANSKT LANTBRÖD': 'Franskt Lantbröd',
+  'SURDEGSBRÖD ITALIEN': 'Surdegsbröd Italien',
+  'FRÖ LEVAIN 600G': 'Frö Levain',
+  'ROSTBRÖD 450G': 'Rostbröd',
   'PAVE NAPOLI 420G': 'Pave Napoli',
-  'SESAM/HAVSSALT 130G': 'Sesame Sea Salt Crackers',
+  'SESAM/HAVSSALT 130G': 'Sesam/Havssalt',
 
-  // Meat & Proteins
-  'RÖKT KALKON 200G': 'Smoked Turkey',
-  'KOKT SKINKA 200G': 'Cooked Ham',
-  'LEVERPASTEJ 200G': 'Liver Pate',
-  'DELIKATESSKÖTTBULLAR': 'Meatballs Delicatessen',
-  'KYCKBRÖFILE STRIM': 'Chicken Breast Strips',
-  'KYCKLINGBURGARE': 'Chicken Burgers',
+  // Kött & Proteiner (Meat & Proteins)
+  'RÖKT KALKON 200G': 'Rökt Kalkon',
+  'KOKT SKINKA 200G': 'Kokt Skinka',
+  'LEVERPASTEJ 200G': 'Leverpastej',
+  'DELIKATESSKÖTTBULLAR': 'Delikatessköttbullar',
+  'KYCKBRÖFILE STRIM': 'Kycklingbröst Strimlad',
+  'KYCKLINGBURGARE': 'Kycklingburgare',
 
-  // Eggs
-  'ÄGG 6P UTE M/L': 'Eggs 6-pack',
+  // Ägg (Eggs)
+  'ÄGG 6P UTE M/L': 'Ägg 6-pack',
 
-  // Yogurt
-  'MILD NATURELL YOG': 'Yogurt Natural Mild',
-  'MILD YOGH NAT 1000G': 'Yogurt Natural Mild 1kg',
-  'YOGHURT NAT EKO1.5KG': 'Yogurt Natural Eco',
-  'CHOKOMOUSSE 100G': 'Chocolate Mousse',
+  // Yoghurt
+  'MILD NATURELL YOG': 'Mild Yoghurt Naturell',
+  'MILD YOGH NAT 1000G': 'Mild Yoghurt Naturell 1kg',
+  'YOGHURT NAT EKO1.5KG': 'Yoghurt Naturell Eko',
+  'CHOKOMOUSSE 100G': 'Chokladmousse',
 
-  // Juice & Beverages
-  'APELSINJUICE': 'Orange Juice',
-  'JUICE TROPISK 1.75L': 'Tropical Juice',
-  'JUIC ÄPP ANA KIW LI': 'Juice Apple Pineapple',
-  'JUIC ÄP KÄR JRG SVB': 'Juice Apple Cherry',
-  'ÄP/GR/PA/IN 850ML': 'Multi Fruit Juice',
+  // Juice & Dryck (Juice & Beverages)
+  'APELSINJUICE': 'Apelsinjuice',
+  'JUICE TROPISK 1.75L': 'Tropisk Juice',
+  'JUIC ÄPP ANA KIW LI': 'Juice Äpple Ananas',
+  'JUIC ÄP KÄR JRG SVB': 'Juice Äpple Körsbär',
+  'ÄP/GR/PA/IN 850ML': 'Multifruktjuice',
 
-  // Produce
-  'COCKTAILTOMATER': 'Cherry Tomatoes',
-  'TOMAT BABYPLOMMON': 'Baby Plum Tomatoes',
-  'SPETSPAPRIKA 200G': 'Bell Pepper',
-  'GURKA IMPORT': 'Cucumber',
-  'ROMANSALLAD IMPORT': 'Romaine Lettuce',
-  'SALLADSMIX EKO': 'Salad Mix Eco',
-  'SPENAT': 'Spinach',
-  'BLADSPENAT 450G': 'Spinach Leaves',
-  'ÄPPLE GRANNY SMITH': 'Apples Granny Smith',
-  'ÄPPLE ROYAL GALA': 'Apples Royal Gala',
-  'DRUVOR GRÖNA': 'Green Grapes',
-  'INGEFÄRA': 'Ginger',
-  'GRÄSLÖK 15G': 'Chives',
+  // Frukt & Grönt (Produce)
+  'COCKTAILTOMATER': 'Cocktailtomater',
+  'TOMAT BABYPLOMMON': 'Babyplommontomater',
+  'SPETSPAPRIKA 200G': 'Spetspaprika',
+  'GURKA IMPORT': 'Gurka',
+  'ROMANSALLAD IMPORT': 'Romansallad',
+  'SALLADSMIX EKO': 'Salladsmix Eko',
+  'SPENAT': 'Spenat',
+  'BLADSPENAT 450G': 'Bladspenat',
+  'ÄPPLE GRANNY SMITH': 'Äpplen Granny Smith',
+  'ÄPPLE ROYAL GALA': 'Äpplen Royal Gala',
+  'DRUVOR GRÖNA': 'Gröna Druvor',
+  'INGEFÄRA': 'Ingefära',
+  'GRÄSLÖK 15G': 'Gräslök',
 
-  // Frozen
+  // Fryst (Frozen)
   'PIZZA PEPPERONI': 'Pizza Pepperoni',
   'PIZZA MOZZARELL 355G': 'Pizza Mozzarella',
   'PIZZA SALAMI': 'Pizza Salami',
   'PIZZA PROSCIUTTO': 'Pizza Prosciutto',
   '4 CHEESE': 'Pizza 4 Cheese',
   'PIZZA PE CALAB 540G': 'Pizza Calabrese',
-  'FISH & CRISP': 'Fish & Chips',
+  'FISH & CRISP': 'Fish & Crisp',
   'SWEET POTATO FRIES': 'Sweet Potato Fries',
-  'BROCCOLI 1KG': 'Broccoli Frozen',
-  'PANNKAKOR 14ST': 'Pancakes',
+  'BROCCOLI 1KG': 'Broccoli Fryst',
+  'PANNKAKOR 14ST': 'Pannkakor',
 
-  // Pasta & Grains
-  'TORTELLONI RIC/SPE': 'Tortelloni Ricotta',
-  'PENNE RIGATE': 'Penne Pasta',
-  'BASMATIRIS 2KG': 'Basmati Rice',
-  'LÅNGKORNIGT RIS 1KG': 'Long Grain Rice',
+  // Pasta & Gryn (Pasta & Grains)
+  'TORTELLONI RIC/SPE': 'Tortelloni Ricotta/Spenat',
+  'PENNE RIGATE': 'Penne Rigate',
+  'BASMATIRIS 2KG': 'Basmatiris',
+  'LÅNGKORNIGT RIS 1KG': 'Långkornigt Ris',
   'RASKER 1,1KG': 'Rasker',
 
-  // Sauces & Condiments
-  'KROSSADE TOMATER': 'Crushed Tomatoes',
-  'REAL MAYONNAIS250ML': 'Real Mayonnaise',
-  'GARLIC SAUCE 400G': 'Garlic Sauce',
-  'PASTASÅS 400G': 'Pasta Sauce',
-  'CLASSICO': 'Classico Sauce',
-  'MARMELAD 4 FRUKT284G': 'Marmalade 4 Fruits',
-  'LIME PRESSAD 200ML': 'Lime Juice Pressed',
+  // Såser & Tillbehör (Sauces & Condiments)
+  'KROSSADE TOMATER': 'Krossade Tomater',
+  'REAL MAYONNAIS250ML': 'Real Majonnäs',
+  'GARLIC SAUCE 400G': 'Vitlökssås',
+  'PASTASÅS 400G': 'Pastasås',
+  'CLASSICO': 'Classico',
+  'MARMELAD 4 FRUKT284G': 'Marmelad 4 Frukter',
+  'LIME PRESSAD 200ML': 'Limejuice Pressad',
 
-  // Prepared Foods
-  'POTATIS SALLAD 200G': 'Potato Salad',
-  'POTATISGRATÄNG 800G': 'Potato Gratin',
+  // Färdigmat (Prepared Foods)
+  'POTATIS SALLAD 200G': 'Potatissallad',
+  'POTATISGRATÄNG 800G': 'Potatisgratäng',
 
-  // Breakfast & Cereals
+  // Frukost & Flingor (Breakfast & Cereals)
   'GRANOLA NATURAL': 'Granola Natural',
-  'GRANOLA HAZELNUT': 'Granola Hazelnut',
-  'MAJSKAKA 130G CH/HS': 'Corn Cakes',
-  'KAKAO': 'Cocoa Powder',
+  'GRANOLA HAZELNUT': 'Granola Hasselnöt',
+  'MAJSKAKA 130G CH/HS': 'Majskakor',
+  'KAKAO': 'Kakao',
 
-  // Snacks & Sweets
+  // Snacks & Godis (Snacks & Sweets)
   'CHEEZ DOODLES 120G': 'Cheez Doodles',
-  'CHOKLADKAKA MJÖLK': 'Chocolate Bar Milk',
-  'SCHWEIZERNÖT 150G': 'Swiss Nuts',
-  'M&M PEANUT': 'M&M Peanuts',
-  'MENTOS FRUKT 38G': 'Mentos Fruit',
+  'CHOKLADKAKA MJÖLK': 'Chokladkaka Mjölk',
+  'SCHWEIZERNÖT 150G': 'Schweizernötter',
+  'M&M PEANUT': 'M&M Peanut',
+  'MENTOS FRUKT 38G': 'Mentos Frukt',
   'TORT CHIPS SALT 500G': 'Tortilla Chips',
-  'PUMPA KÄRNOR': 'Pumpkin Seeds',
+  'PUMPA KÄRNOR': 'Pumpakärnor',
   'EASYPICK M/L': 'Easy Pick',
 
-  // Pantry
-  'LÖK PULVER 570G': 'Onion Powder',
-  'SKOGSHONUNG 450G': 'Forest Honey',
-  'BAKPAPPER 33X42CM': 'Baking Paper',
-  'SAFELOC 1 L': 'Storage Bags',
-  'GRAN CREMA HB 1KG': 'Gran Crema Coffee',
+  // Skafferi (Pantry)
+  'LÖK PULVER 570G': 'Lökpulver',
+  'SKOGSHONUNG 450G': 'Skogshonung',
+  'BAKPAPPER 33X42CM': 'Bakpapper',
+  'SAFELOC 1 L': 'Safeloc',
+  'GRAN CREMA HB 1KG': 'Gran Crema Kaffe',
   'CREAM LEMON': 'Cream Lemon',
 
-  // Household
-  'SERVETT 100P VIT': 'Napkins White',
-  'SERVETTER ROSA 100P': 'Napkins Pink',
-  'STÄDSERVETT BADRUM': 'Cleaning Cloth Bathroom',
-  'STÄDSERVETT GLAS': 'Glass Cleaning Cloth',
-  'DISKBORSTE 1P': 'Dish Brush',
-  'NORMAL TROSSKYDD': 'Panty Liners',
-  'VITT TOALETTPAPPER': 'Toilet Paper White',
-  'COLOR FLYTANDE TVÄTT': 'Liquid Detergent Color',
-  'HANDDISKMEDEL': 'Dish Soap',
-  'AVFALLSPÅSE': 'Garbage Bags',
-  'MATLÅDA GRÅ': 'Food Container',
-  'KOLSYREPATRON GRÖN': 'CO2 Cartridge',
+  // Hushåll (Household)
+  'SERVETT 100P VIT': 'Servetter Vita',
+  'SERVETTER ROSA 100P': 'Servetter Rosa',
+  'STÄDSERVETT BADRUM': 'Städservett Badrum',
+  'STÄDSERVETT GLAS': 'Städservett Glas',
+  'DISKBORSTE 1P': 'Diskborste',
+  'NORMAL TROSSKYDD': 'Trosskydd',
+  'VITT TOALETTPAPPER': 'Toalettpapper Vitt',
+  'COLOR FLYTANDE TVÄTT': 'Tvättmedel Color',
+  'HANDDISKMEDEL': 'Handdiskmedel',
+  'AVFALLSPÅSE': 'Avfallspåsar',
+  'MATLÅDA GRÅ': 'Matlåda',
+  'KOLSYREPATRON GRÖN': 'Kolsyrepatron',
   'GAS BIOGENIC': 'Gas Biogenic',
 
-  // Personal Care
-  'BIG KIDS SMI +6 ÅR': 'Toothbrush Kids',
-  'TANDKR50ML J 6-12ÅR': 'Toothpaste Kids',
-  'VITAMIN': 'Vitamins',
+  // Personlig Vård (Personal Care)
+  'BIG KIDS SMI +6 ÅR': 'Tandborste Barn',
+  'TANDKR50ML J 6-12ÅR': 'Tandkräm Barn',
+  'VITAMIN': 'Vitamin',
 
-  // Pet Food
-  'KATTMAT1,4KG KAST UT': 'Cat Food 1.4kg',
-  'KATTMAT1,4KG KAST IN': 'Cat Food 1.4kg Indoor',
+  // Husdjursmat (Pet Food)
+  'KATTMAT1,4KG KAST UT': 'Kattmat 1.4kg',
+  'KATTMAT1,4KG KAST IN': 'Kattmat 1.4kg Indoor',
 
-  // Wine & Beverages
-  'HENKELL ROSÉVIN': 'Henkell Rosé Wine',
+  // Vin & Alkohol (Wine & Beverages)
+  'HENKELL ROSÉVIN': 'Henkell Rosévin',
 
-  // Baked Goods
+  // Bakverk (Baked Goods)
   'SKOTTE 50G': 'Skotte',
-  'KANELSN?CKA': 'Cinnamon Bun'
+  'KANELSN?CKA': 'Kanelsnäcka'
 };
 
-// Category mapping
+// Category mapping (categories in English for grouping)
 const CATEGORY_MAPPING = {
-  // Dairy
-  'Milk Standard 3%': 'Dairy',
-  'Milk 3%': 'Dairy',
-  'Chocolate Milk': 'Dairy',
+  // Mjölkprodukter (Dairy)
+  'Standardmjölk 3%': 'Dairy',
+  'Mjölk 3%': 'Dairy',
+  'Chokladmjölk': 'Dairy',
 
-  // Cheese
-  'Präst Cheese Medium': 'Dairy - Cheese',
-  'Präst Cheese Mild': 'Dairy - Cheese',
-  'Quattrocento Cheese': 'Dairy - Cheese',
-  'Gouda Cheese': 'Dairy - Cheese',
-  'Edamer Cheese': 'Dairy - Cheese',
-  'Coulommiers Cheese': 'Dairy - Cheese',
-  'Philadelphia Cheese': 'Dairy - Cheese',
-  'Feta Cheese': 'Dairy - Cheese',
-  'Ham Cheese': 'Dairy - Cheese',
-  'Bacon Cheese': 'Dairy - Cheese',
-  'Crayfish Cheese': 'Dairy - Cheese',
-  'Gouda Shredded': 'Dairy - Cheese',
-  'Edamer Sliced': 'Dairy - Cheese',
+  // Ost (Cheese)
+  'Prästost Mellan': 'Dairy - Cheese',
+  'Prästost Mild': 'Dairy - Cheese',
+  'Quattrocento': 'Dairy - Cheese',
+  'Gouda': 'Dairy - Cheese',
+  'Edamer': 'Dairy - Cheese',
+  'Coulommiers': 'Dairy - Cheese',
+  'Philadelphia': 'Dairy - Cheese',
+  'Fetaost': 'Dairy - Cheese',
+  'Skinkost': 'Dairy - Cheese',
+  'Baconost': 'Dairy - Cheese',
+  'Kräftost': 'Dairy - Cheese',
+  'Riven Gouda': 'Dairy - Cheese',
+  'Skivad Edamer': 'Dairy - Cheese',
 
-  // Butter & Spreads
-  'Butter Gårdsgoda': 'Dairy - Butter',
-  'Butter Extra Salted': 'Dairy - Butter',
-  'Peanut Butter': 'Condiments & Spreads',
-  'Peanut Butter Creamy': 'Condiments & Spreads',
+  // Smör & Pålägg (Butter & Spreads)
+  'Smör Gårdsgoda': 'Dairy - Butter',
+  'Smör Extrasaltat': 'Dairy - Butter',
+  'Jordnötssmör': 'Condiments & Spreads',
+  'Jordnötssmör Creamy': 'Condiments & Spreads',
 
-  // Bread
-  'Rye Bread Bosses': 'Bread & Bakery',
-  'Sport Bread': 'Bread & Bakery',
-  'Sourdough Seed': 'Bread & Bakery',
-  'Levain Mediterranean': 'Bread & Bakery',
-  'Levain Bread': 'Bread & Bakery',
+  // Bröd (Bread)
+  'Rågbröd Bosses': 'Bread & Bakery',
+  'Sportbröd': 'Bread & Bakery',
+  'Surdegslimpa Frö': 'Bread & Bakery',
+  'Levain Medelhavs': 'Bread & Bakery',
+  'Levainbröd': 'Bread & Bakery',
   'Ciabatta': 'Bread & Bakery',
-  'Crispbread': 'Bread & Bakery',
-  'Country Bread Bistro': 'Bread & Bakery',
-  'Greek Country Bread': 'Bread & Bakery',
-  'French Country Bread': 'Bread & Bakery',
-  'Sourdough Italian': 'Bread & Bakery',
-  'Seed Levain': 'Bread & Bakery',
-  'Toast Bread': 'Bread & Bakery',
+  'Knäckebröd': 'Bread & Bakery',
+  'Lantbröd Bistro': 'Bread & Bakery',
+  'Grekiskt Lantbröd': 'Bread & Bakery',
+  'Franskt Lantbröd': 'Bread & Bakery',
+  'Surdegsbröd Italien': 'Bread & Bakery',
+  'Frö Levain': 'Bread & Bakery',
+  'Rostbröd': 'Bread & Bakery',
   'Pave Napoli': 'Bread & Bakery',
-  'Sesame Sea Salt Crackers': 'Bread & Bakery',
-  'Cinnamon Bun': 'Bread & Bakery',
+  'Sesam/Havssalt': 'Bread & Bakery',
+  'Kanelsnäcka': 'Bread & Bakery',
   'Skotte': 'Bread & Bakery',
 
-  // Meat
-  'Smoked Turkey': 'Meat & Proteins',
-  'Cooked Ham': 'Meat & Proteins',
-  'Liver Pate': 'Meat & Proteins',
-  'Meatballs Delicatessen': 'Meat & Proteins',
-  'Chicken Breast Strips': 'Meat & Proteins',
-  'Chicken Burgers': 'Meat & Proteins',
+  // Kött & Proteiner (Meat)
+  'Rökt Kalkon': 'Meat & Proteins',
+  'Kokt Skinka': 'Meat & Proteins',
+  'Leverpastej': 'Meat & Proteins',
+  'Delikatessköttbullar': 'Meat & Proteins',
+  'Kycklingbröst Strimlad': 'Meat & Proteins',
+  'Kycklingburgare': 'Meat & Proteins',
 
-  // Eggs
-  'Eggs 6-pack': 'Dairy - Eggs',
+  // Ägg (Eggs)
+  'Ägg 6-pack': 'Dairy - Eggs',
 
-  // Yogurt
-  'Yogurt Natural Mild': 'Dairy - Yogurt',
-  'Yogurt Natural Mild 1kg': 'Dairy - Yogurt',
-  'Yogurt Natural Eco': 'Dairy - Yogurt',
-  'Chocolate Mousse': 'Dairy - Yogurt',
+  // Yoghurt
+  'Mild Yoghurt Naturell': 'Dairy - Yogurt',
+  'Mild Yoghurt Naturell 1kg': 'Dairy - Yogurt',
+  'Yoghurt Naturell Eko': 'Dairy - Yogurt',
+  'Chokladmousse': 'Dairy - Yogurt',
 
-  // Juice
-  'Orange Juice': 'Beverages',
-  'Tropical Juice': 'Beverages',
-  'Juice Apple Pineapple': 'Beverages',
-  'Juice Apple Cherry': 'Beverages',
-  'Multi Fruit Juice': 'Beverages',
+  // Juice & Dryck (Juice)
+  'Apelsinjuice': 'Beverages',
+  'Tropisk Juice': 'Beverages',
+  'Juice Äpple Ananas': 'Beverages',
+  'Juice Äpple Körsbär': 'Beverages',
+  'Multifruktjuice': 'Beverages',
 
-  // Produce
-  'Cherry Tomatoes': 'Produce',
-  'Baby Plum Tomatoes': 'Produce',
-  'Bell Pepper': 'Produce',
-  'Cucumber': 'Produce',
-  'Romaine Lettuce': 'Produce',
-  'Salad Mix Eco': 'Produce',
-  'Spinach': 'Produce',
-  'Spinach Leaves': 'Produce',
-  'Apples Granny Smith': 'Produce',
-  'Apples Royal Gala': 'Produce',
-  'Green Grapes': 'Produce',
-  'Ginger': 'Produce',
-  'Chives': 'Produce',
+  // Frukt & Grönt (Produce)
+  'Cocktailtomater': 'Produce',
+  'Babyplommontomater': 'Produce',
+  'Spetspaprika': 'Produce',
+  'Gurka': 'Produce',
+  'Romansallad': 'Produce',
+  'Salladsmix Eko': 'Produce',
+  'Spenat': 'Produce',
+  'Bladspenat': 'Produce',
+  'Äpplen Granny Smith': 'Produce',
+  'Äpplen Royal Gala': 'Produce',
+  'Gröna Druvor': 'Produce',
+  'Ingefära': 'Produce',
+  'Gräslök': 'Produce',
 
-  // Frozen
+  // Fryst (Frozen)
   'Pizza Pepperoni': 'Frozen Foods',
   'Pizza Mozzarella': 'Frozen Foods',
   'Pizza Salami': 'Frozen Foods',
   'Pizza Prosciutto': 'Frozen Foods',
   'Pizza 4 Cheese': 'Frozen Foods',
   'Pizza Calabrese': 'Frozen Foods',
-  'Fish & Chips': 'Frozen Foods',
+  'Fish & Crisp': 'Frozen Foods',
   'Sweet Potato Fries': 'Frozen Foods',
-  'Broccoli Frozen': 'Frozen Foods',
-  'Pancakes': 'Frozen Foods',
+  'Broccoli Fryst': 'Frozen Foods',
+  'Pannkakor': 'Frozen Foods',
 
-  // Pasta
-  'Tortelloni Ricotta': 'Pantry - Pasta',
-  'Penne Pasta': 'Pantry - Pasta',
-  'Basmati Rice': 'Pantry - Grains',
-  'Long Grain Rice': 'Pantry - Grains',
+  // Pasta & Gryn (Pasta)
+  'Tortelloni Ricotta/Spenat': 'Pantry - Pasta',
+  'Penne Rigate': 'Pantry - Pasta',
+  'Basmatiris': 'Pantry - Grains',
+  'Långkornigt Ris': 'Pantry - Grains',
   'Rasker': 'Pantry - Grains',
 
-  // Sauces
-  'Crushed Tomatoes': 'Pantry - Sauces',
-  'Real Mayonnaise': 'Condiments & Spreads',
-  'Garlic Sauce': 'Pantry - Sauces',
-  'Pasta Sauce': 'Pantry - Sauces',
-  'Classico Sauce': 'Pantry - Sauces',
-  'Marmalade 4 Fruits': 'Condiments & Spreads',
-  'Lime Juice Pressed': 'Condiments & Spreads',
+  // Såser & Tillbehör (Sauces)
+  'Krossade Tomater': 'Pantry - Sauces',
+  'Real Majonnäs': 'Condiments & Spreads',
+  'Vitlökssås': 'Pantry - Sauces',
+  'Pastasås': 'Pantry - Sauces',
+  'Classico': 'Pantry - Sauces',
+  'Marmelad 4 Frukter': 'Condiments & Spreads',
+  'Limejuice Pressad': 'Condiments & Spreads',
 
-  // Prepared
-  'Potato Salad': 'Prepared Foods',
-  'Potato Gratin': 'Prepared Foods',
+  // Färdigmat (Prepared)
+  'Potatissallad': 'Prepared Foods',
+  'Potatisgratäng': 'Prepared Foods',
 
-  // Breakfast
+  // Frukost (Breakfast)
   'Granola Natural': 'Breakfast & Cereals',
-  'Granola Hazelnut': 'Breakfast & Cereals',
-  'Corn Cakes': 'Breakfast & Cereals',
-  'Cocoa Powder': 'Breakfast & Cereals',
+  'Granola Hasselnöt': 'Breakfast & Cereals',
+  'Majskakor': 'Breakfast & Cereals',
+  'Kakao': 'Breakfast & Cereals',
 
-  // Snacks
+  // Snacks & Godis (Snacks)
   'Cheez Doodles': 'Snacks',
-  'Chocolate Bar Milk': 'Snacks',
-  'Swiss Nuts': 'Snacks',
-  'M&M Peanuts': 'Snacks',
-  'Mentos Fruit': 'Snacks',
+  'Chokladkaka Mjölk': 'Snacks',
+  'Schweizernötter': 'Snacks',
+  'M&M Peanut': 'Snacks',
+  'Mentos Frukt': 'Snacks',
   'Tortilla Chips': 'Snacks',
-  'Pumpkin Seeds': 'Snacks',
+  'Pumpakärnor': 'Snacks',
   'Easy Pick': 'Snacks',
 
-  // Pantry
-  'Onion Powder': 'Pantry - Spices',
-  'Forest Honey': 'Condiments & Spreads',
-  'Baking Paper': 'Household',
-  'Storage Bags': 'Household',
-  'Gran Crema Coffee': 'Beverages',
+  // Skafferi (Pantry)
+  'Lökpulver': 'Pantry - Spices',
+  'Skogshonung': 'Condiments & Spreads',
+  'Bakpapper': 'Household',
+  'Safeloc': 'Household',
+  'Gran Crema Kaffe': 'Beverages',
   'Cream Lemon': 'Beverages',
 
-  // Household
-  'Napkins White': 'Household',
-  'Napkins Pink': 'Household',
-  'Cleaning Cloth Bathroom': 'Household',
-  'Glass Cleaning Cloth': 'Household',
-  'Dish Brush': 'Household',
-  'Panty Liners': 'Personal Care',
-  'Toilet Paper White': 'Household',
-  'Liquid Detergent Color': 'Household',
-  'Dish Soap': 'Household',
-  'Garbage Bags': 'Household',
-  'Food Container': 'Household',
-  'CO2 Cartridge': 'Household',
+  // Hushåll (Household)
+  'Servetter Vita': 'Household',
+  'Servetter Rosa': 'Household',
+  'Städservett Badrum': 'Household',
+  'Städservett Glas': 'Household',
+  'Diskborste': 'Household',
+  'Trosskydd': 'Personal Care',
+  'Toalettpapper Vitt': 'Household',
+  'Tvättmedel Color': 'Household',
+  'Handdiskmedel': 'Household',
+  'Avfallspåsar': 'Household',
+  'Matlåda': 'Household',
+  'Kolsyrepatron': 'Household',
   'Gas Biogenic': 'Household',
 
-  // Personal Care
-  'Toothbrush Kids': 'Personal Care',
-  'Toothpaste Kids': 'Personal Care',
-  'Vitamins': 'Personal Care',
+  // Personlig Vård (Personal Care)
+  'Tandborste Barn': 'Personal Care',
+  'Tandkräm Barn': 'Personal Care',
+  'Vitamin': 'Personal Care',
 
-  // Pet
-  'Cat Food 1.4kg': 'Pet Food',
-  'Cat Food 1.4kg Indoor': 'Pet Food',
+  // Husdjursmat (Pet)
+  'Kattmat 1.4kg': 'Pet Food',
+  'Kattmat 1.4kg Indoor': 'Pet Food',
 
-  // Alcohol
-  'Henkell Rosé Wine': 'Alcoholic Beverages'
+  // Vin & Alkohol (Alcohol)
+  'Henkell Rosévin': 'Alcoholic Beverages'
 };
 
 // Function to fix encoding
