@@ -1267,10 +1267,24 @@ function showProductDetail(productName) {
     };
   }
 
+  // Get all available categories for dropdown
+  const allCategories = getAllCategories();
+
   document.getElementById('modal-content').innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
     <h2>${productName}</h2>
-    <p style="color: #666; margin-bottom: 20px;">${history.category} ${isWeightBased ? '⚖️ Sold by weight' : ''}</p>
+    <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+      <span style="color: #666;">Category:</span>
+      <select
+        id="product-category-select"
+        onchange="updateProductCategory('${productName.replace(/'/g, "\\'")}', this.value)"
+        style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; background: white; cursor: pointer;">
+        ${allCategories.map(cat => `
+          <option value="${cat}" ${cat === history.category ? 'selected' : ''}>${cat}</option>
+        `).join('')}
+      </select>
+      ${isWeightBased ? '<span style="color: #666;">⚖️ Sold by weight</span>' : ''}
+    </div>
 
     ${isWeightBased ? `
       <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
@@ -1365,6 +1379,35 @@ function showProductDetail(productName) {
 function closeModal() {
   document.getElementById('product-modal').style.display = 'none';
   document.getElementById('modal-overlay').style.display = 'none';
+}
+
+// Update product category from analysis tab
+function updateProductCategory(standardName, newCategory) {
+  const customMappings = loadCustomMappings();
+
+  // Find all raw product names that map to this standardized name
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    if (!customMappings[rawName]) {
+      customMappings[rawName] = {
+        standardName: product.standardName,
+        category: newCategory
+      };
+    } else {
+      customMappings[rawName].category = newCategory;
+    }
+  });
+
+  // Save and refresh
+  saveCustomMappings(customMappings);
+
+  // Close and reopen modal to show updated category
+  closeModal();
+  setTimeout(() => showProductDetail(standardName), 100);
 }
 
 // Show detailed products for a category
