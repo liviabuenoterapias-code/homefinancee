@@ -69,6 +69,16 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 999; display: none; }
 .close-modal { float: right; font-size: 28px; cursor: pointer; color: #999; }
 .close-modal:hover { color: #333; }
+.product-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+.product-table th { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 15px; text-align: left; font-weight: 600; position: sticky; top: 0; }
+.product-table td { padding: 12px; border-bottom: 1px solid #eee; }
+.product-table tr:hover { background: #f9f9f9; }
+.product-table input, .product-table select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+.product-table input:focus, .product-table select:focus { border-color: #667eea; outline: none; }
+.product-count { background: #667eea; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.edit-indicator { color: #28a745; font-size: 12px; margin-left: 5px; }
+.reset-btn { background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.reset-btn:hover { background: #c82333; }
 </style>
 </head>
 <body>
@@ -79,6 +89,7 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
   <div class="tabs">
     <button class="tab active" onclick="switchTab('parser')">📄 Parse Receipts</button>
     <button class="tab" onclick="switchTab('analysis')">📊 Analysis</button>
+    <button class="tab" onclick="switchTab('products')">🏷️ Product Library</button>
   </div>
 
   <!-- Parser Tab -->
@@ -146,6 +157,25 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
     </div>
   </div>
   <!-- End Analysis Tab -->
+
+  <!-- Product Library Tab -->
+  <div id="products-tab" class="tab-content">
+    <div style="margin-bottom: 20px;">
+      <h2>🏷️ Product Library</h2>
+      <p style="color: #666; margin: 10px 0;">Review and edit how products are named and categorized. Your custom mappings will be saved and used in analysis.</p>
+      <div style="margin-top: 15px;">
+        <input type="text" id="productSearch" placeholder="🔍 Search products..." style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+      </div>
+    </div>
+    <div id="product-library-content">
+      <div style="text-align: center; padding: 60px 20px; color: #999;">
+        <div style="font-size: 64px; margin-bottom: 20px;">🏷️</div>
+        <h2>No Products Yet</h2>
+        <p style="margin-top: 10px;">Upload some receipts in the Parse tab first!</p>
+      </div>
+    </div>
+  </div>
+  <!-- End Product Library Tab -->
 
   <!-- Product Detail Modal -->
   <div id="modal-overlay" class="modal-overlay" onclick="closeModal()"></div>
@@ -732,6 +762,13 @@ function switchTab(tabName) {
   if (tabName === 'analysis') {
     refreshAnalysis();
   }
+
+  // If switching to products, refresh product library
+  if (tabName === 'products') {
+    if (allReceipts.length > 0) {
+      renderProductLibrary();
+    }
+  }
 }
 
 // Analysis functions
@@ -1058,6 +1095,229 @@ function closeModal() {
   document.getElementById('product-modal').style.display = 'none';
   document.getElementById('modal-overlay').style.display = 'none';
 }
+
+// ===== PRODUCT LIBRARY MANAGEMENT =====
+
+// Load custom product mappings from localStorage
+function loadCustomMappings() {
+  const saved = localStorage.getItem('customProductMappings');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save custom product mappings to localStorage
+function saveCustomMappings(mappings) {
+  localStorage.setItem('customProductMappings', JSON.stringify(mappings));
+  // Reload analysis to reflect changes
+  if (allReceipts.length > 0) {
+    renderAnalysis();
+  }
+}
+
+// Build product library from all receipts
+function buildProductLibrary() {
+  const productMap = new Map();
+  const customMappings = loadCustomMappings();
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      const rawName = item.name;
+      if (!productMap.has(rawName)) {
+        // Get standardized name and category (from custom or default)
+        const customData = customMappings[rawName];
+        const standardName = customData?.standardName || window.ProductCategories.standardizeProduct(rawName);
+        const category = customData?.category || window.ProductCategories.getCategory(standardName);
+
+        productMap.set(rawName, {
+          rawName: rawName,
+          standardName: standardName,
+          category: category,
+          count: 0,
+          totalSpent: 0,
+          lastSeen: receipt.date,
+          isCustom: !!customData
+        });
+      }
+
+      const product = productMap.get(rawName);
+      product.count += item.quantity;
+      product.totalSpent += item.totalPrice;
+      if (receipt.date > product.lastSeen) {
+        product.lastSeen = receipt.date;
+      }
+    });
+  });
+
+  return Array.from(productMap.values()).sort((a, b) => b.count - a.count);
+}
+
+// Get all unique categories
+function getAllCategories() {
+  return [
+    'Dairy',
+    'Dairy - Cheese',
+    'Dairy - Butter',
+    'Dairy - Eggs',
+    'Dairy - Yogurt',
+    'Bread & Bakery',
+    'Meat & Proteins',
+    'Beverages',
+    'Alcoholic Beverages',
+    'Produce',
+    'Frozen Foods',
+    'Pantry - Pasta',
+    'Pantry - Grains',
+    'Pantry - Sauces',
+    'Pantry - Spices',
+    'Condiments & Spreads',
+    'Prepared Foods',
+    'Breakfast & Cereals',
+    'Snacks',
+    'Household',
+    'Personal Care',
+    'Pet Food',
+    'Other'
+  ];
+}
+
+// Render product library table
+function renderProductLibrary(searchFilter = '') {
+  const products = buildProductLibrary();
+  const filteredProducts = searchFilter
+    ? products.filter(p =>
+        p.rawName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        p.standardName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        p.category.toLowerCase().includes(searchFilter.toLowerCase())
+      )
+    : products;
+
+  const categories = getAllCategories();
+  const customMappings = loadCustomMappings();
+
+  const content = document.getElementById('product-library-content');
+
+  if (filteredProducts.length === 0) {
+    content.innerHTML = `
+      <div style="text-align: center; padding: 40px 20px; color: #999;">
+        <div style="font-size: 48px; margin-bottom: 20px;">🔍</div>
+        <h3>No products found</h3>
+        <p style="margin-top: 10px;">Try a different search term</p>
+      </div>
+    `;
+    return;
+  }
+
+  content.innerHTML = `
+    <div style="margin-bottom: 15px; color: #666;">
+      <strong>${filteredProducts.length}</strong> products found (${products.length} total)
+      ${Object.keys(customMappings).length > 0 ? `
+        • <span style="color: #28a745;"><strong>${Object.keys(customMappings).length}</strong> custom mappings</span>
+      ` : ''}
+    </div>
+    <div style="max-height: 70vh; overflow-y: auto;">
+      <table class="product-table">
+        <thead>
+          <tr>
+            <th style="width: 25%;">Original Name</th>
+            <th style="width: 30%;">Standardized Name</th>
+            <th style="width: 25%;">Category</th>
+            <th style="width: 10%;">Purchases</th>
+            <th style="width: 10%;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredProducts.map(p => `
+            <tr>
+              <td>
+                <div style="font-family: monospace; color: #555;">${p.rawName}</div>
+                <div style="font-size: 11px; color: #999; margin-top: 2px;">Last: ${p.lastSeen}</div>
+              </td>
+              <td>
+                <input
+                  type="text"
+                  value="${p.standardName}"
+                  data-raw="${p.rawName}"
+                  data-field="standardName"
+                  onchange="updateProductMapping(this)"
+                  placeholder="Enter product name..."
+                />
+                ${p.isCustom ? '<span class="edit-indicator">✓ Custom</span>' : ''}
+              </td>
+              <td>
+                <select
+                  data-raw="${p.rawName}"
+                  data-field="category"
+                  onchange="updateProductMapping(this)"
+                >
+                  ${categories.map(cat => `
+                    <option value="${cat}" ${cat === p.category ? 'selected' : ''}>${cat}</option>
+                  `).join('')}
+                </select>
+              </td>
+              <td>
+                <span class="product-count">${p.count}</span>
+                <div style="font-size: 11px; color: #999; margin-top: 4px;">${p.totalSpent.toFixed(0)} kr</div>
+              </td>
+              <td>
+                ${p.isCustom ? `
+                  <button class="reset-btn" onclick="resetProductMapping('${p.rawName}')">Reset</button>
+                ` : ''}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// Update product mapping
+function updateProductMapping(element) {
+  const rawName = element.getAttribute('data-raw');
+  const field = element.getAttribute('data-field');
+  const value = element.value.trim();
+
+  if (!value) {
+    alert('Value cannot be empty');
+    renderProductLibrary();
+    return;
+  }
+
+  const customMappings = loadCustomMappings();
+
+  if (!customMappings[rawName]) {
+    customMappings[rawName] = {
+      standardName: window.ProductCategories.standardizeProduct(rawName),
+      category: window.ProductCategories.getCategory(window.ProductCategories.standardizeProduct(rawName))
+    };
+  }
+
+  customMappings[rawName][field] = value;
+  saveCustomMappings(customMappings);
+  renderProductLibrary(document.getElementById('productSearch').value);
+}
+
+// Reset product mapping to default
+function resetProductMapping(rawName) {
+  if (!confirm(`Reset "${rawName}" to default mapping?`)) {
+    return;
+  }
+
+  const customMappings = loadCustomMappings();
+  delete customMappings[rawName];
+  saveCustomMappings(customMappings);
+  renderProductLibrary(document.getElementById('productSearch').value);
+}
+
+// Add search handler
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('productSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      renderProductLibrary(e.target.value);
+    });
+  }
+});
+
 </script>
 </body>
 </html>

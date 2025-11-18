@@ -393,6 +393,14 @@ function fixEncoding(text) {
 
 // Function to standardize product name
 function standardizeProduct(rawName) {
+  // Check for custom mapping first (from localStorage)
+  if (typeof localStorage !== 'undefined') {
+    const customMappings = JSON.parse(localStorage.getItem('customProductMappings') || '{}');
+    if (customMappings[rawName]?.standardName) {
+      return customMappings[rawName].standardName;
+    }
+  }
+
   const fixed = fixEncoding(rawName.toUpperCase().trim());
 
   // Try exact match first
@@ -412,7 +420,15 @@ function standardizeProduct(rawName) {
 }
 
 // Function to get category with keyword-based fallback
-function getCategory(standardizedName) {
+function getCategory(standardizedName, rawName = null) {
+  // Check for custom mapping first (from localStorage) using raw name if provided
+  if (rawName && typeof localStorage !== 'undefined') {
+    const customMappings = JSON.parse(localStorage.getItem('customProductMappings') || '{}');
+    if (customMappings[rawName]?.category) {
+      return customMappings[rawName].category;
+    }
+  }
+
   // First try exact match
   if (CATEGORY_MAPPING[standardizedName]) {
     return CATEGORY_MAPPING[standardizedName];

@@ -36,9 +36,10 @@ class GroceryAnalysis {
 
       // Process each item
       receipt.items.forEach(item => {
-        // Standardize product name
+        // Standardize product name (checks custom mappings first)
         const standardName = window.ProductCategories.standardizeProduct(item.name);
-        const category = window.ProductCategories.getCategory(standardName);
+        // Get category (checks custom mappings first, passing raw name)
+        const category = window.ProductCategories.getCategory(standardName, item.name);
 
         const purchase = {
           date: receipt.date,
