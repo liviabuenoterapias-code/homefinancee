@@ -214,10 +214,20 @@ function parseReceiptText(text, filename) {
   const timeMatch = text.match(/(\d{2}:\d{2})/);
   if (timeMatch) receipt.time = timeMatch[1];
 
-  // Extract total - more flexible
-  const totalMatch = text.match(/Totalt\s+([\d,\s]+)\s*(?:SEK|kr)?/i);
+  // Extract total - more flexible and robust
+  // Try multiple patterns for total
+  let totalMatch = text.match(/Totalt[:\s]+([\d\s]+)[,]([\d]{2})\s*(?:SEK|kr)/i);
   if (totalMatch) {
-    receipt.totalAmount = parseFloat(totalMatch[1].replace(',', '.').replace(/\s/g, ''));
+    // Format: "Totalt 1 234,56 SEK" -> extract as "1234.56"
+    const wholePart = totalMatch[1].replace(/\s/g, '');
+    const decimalPart = totalMatch[2];
+    receipt.totalAmount = parseFloat(wholePart + '.' + decimalPart);
+  } else {
+    // Fallback: simpler pattern
+    totalMatch = text.match(/Totalt\s+([\d,\s]+)\s*(?:SEK|kr)?/i);
+    if (totalMatch) {
+      receipt.totalAmount = parseFloat(totalMatch[1].replace(',', '.').replace(/\s/g, ''));
+    }
   }
 
   // Parse items - IMPROVED SECTION DETECTION
@@ -285,8 +295,9 @@ function parseReceiptText(text, filename) {
       continue;
     }
 
-    // PATTERN 1: Standard format with quantity - NAME QTYst*PRICE TOTAL
-    let itemMatch = line.match(/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
+    // Now supports: JUICE 1.75L 2st*34,90 69,80
+    let itemMatch = line.match(/^([\wåäöÅÄÖ&.][\wåäöÅÄÖ&.\s\/%-]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -309,7 +320,8 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 2: Simple format - NAME PRICE (no quantity)
-    itemMatch = line.match(/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+([\d,]+)\s*$/i);
+    // Now supports: FISH & CRISP 55,80
+    itemMatch = line.match(/^([\wåäöÅÄÖ&.][\wåäöÅÄÖ&.\s\/%-]+?)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -340,7 +352,7 @@ function parseReceiptText(text, filename) {
     }
 
     // PATTERN 3: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
-    itemMatch = line.match(/^([\wåäöÅÄÖ][\wåäöÅÄÖ\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^([\wåäöÅÄÖ&.][\wåäöÅÄÖ&.\s\/%-]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -359,6 +371,44 @@ function parseReceiptText(text, filename) {
       matched = true;
       pattern = 'Pattern 3 (Weight)';
       if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 4: Weight info on separate line - check next line
+    // Matches: "PRÄST MELLAN" followed by "0,732kg*134,90kr/kg 98,75"
+    if (i + 1 < endIndex) {
+      const nextLine = lines[i + 1];
+      const weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+
+      if (weightLineMatch && line.match(/^[\wåäöÅÄÖ&.\s\/%-]+$/i)) {
+        const name = line.trim();
+        const weight = parseFloat(weightLineMatch[1].replace(',', '.'));
+        const pricePerKg = parseFloat(weightLineMatch[2].replace(',', '.'));
+        const totalPrice = parseFloat(weightLineMatch[3].replace(',', '.'));
+
+        lastItem = {
+          name: name + ' (' + weight + 'kg)',
+          quantity: 1,
+          unitPrice: totalPrice,
+          totalPrice: totalPrice,
+          discount: 0
+        };
+        receipt.items.push(lastItem);
+        matched = true;
+        pattern = 'Pattern 4 (Multi-line weight)';
+        if (debugMode) {
+          receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+          receipt.debugInfo.push({ lineNum: i + 1, line: nextLine, matched: true, pattern: 'Pattern 4 (continuation)', startIndex, endIndex });
+        }
+        i++; // Skip the next line since we consumed it
+        continue;
+      }
+    }
+
+    // PATTERN 5: Just weight line (continuation from previous)
+    // Skip if it looks like a weight continuation line
+    if (line.match(/^[\d,]+\s*kg\s*\*\s*[\d,]+\s*kr\/kg\s+[\d,]+\s*$/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (weight continuation)', startIndex, endIndex });
       continue;
     }
 
