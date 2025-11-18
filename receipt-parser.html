@@ -1463,7 +1463,7 @@ function showCategoryDetails(categoryName) {
           ${products.map(p => {
             const avgPrice = p.totalSpent / p.totalQuantity;
             return `
-              <tr style="cursor: pointer;" onclick="showProductDetails('${p.name}')">
+              <tr style="cursor: pointer;" onclick="showProductDetail('${p.name.replace(/'/g, "\\'")}')">
                 <td><strong>${p.name}</strong></td>
                 <td>${p.totalQuantity}</td>
                 <td>${p.totalSpent.toFixed(2)} kr</td>
