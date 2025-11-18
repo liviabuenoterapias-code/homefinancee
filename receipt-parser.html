@@ -57,6 +57,8 @@ h1 { color: #764ba2; text-align: center; margin-bottom: 30px; }
 .section-content { padding: 20px; background: #f9f9f9; border-radius: 8px; margin-top: 10px; }
 .analysis-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
 .analysis-table th { background: #667eea; color: white; padding: 12px; text-align: left; }
+.analysis-table th.sortable { cursor: pointer; user-select: none; }
+.analysis-table th.sortable:hover { background: #5568d3; }
 .analysis-table td { padding: 10px; border-bottom: 1px solid #e0e0e0; }
 .analysis-table tr:hover { background: #f0f0f0; cursor: pointer; }
 .chart-container { position: relative; height: 400px; margin: 20px 0; }
@@ -965,8 +967,75 @@ function renderTrends() {
   }, 100);
 }
 
+// Sorting state for staples table
+let staplesSortConfig = {
+  column: 'totalSpent',  // Default sort by total spent
+  direction: 'desc'
+};
+
+function sortStaples(column) {
+  // Toggle direction if clicking the same column, otherwise default to desc
+  if (staplesSortConfig.column === column) {
+    staplesSortConfig.direction = staplesSortConfig.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    staplesSortConfig.column = column;
+    staplesSortConfig.direction = 'desc';
+  }
+  renderStaples();
+}
+
 function renderStaples() {
   const staples = analysisInstance.getStapleProducts(0.7);
+
+  // Sort the staples based on current config
+  const sortedStaples = [...staples].sort((a, b) => {
+    let aVal, bVal;
+
+    switch (staplesSortConfig.column) {
+      case 'name':
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+        return staplesSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'category':
+        aVal = a.category.toLowerCase();
+        bVal = b.category.toLowerCase();
+        return staplesSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'frequency':
+        aVal = a.frequency;
+        bVal = b.frequency;
+        break;
+      case 'totalQuantity':
+        aVal = a.totalQuantity;
+        bVal = b.totalQuantity;
+        break;
+      case 'totalSpent':
+        aVal = a.totalSpent;
+        bVal = b.totalSpent;
+        break;
+      case 'avgPrice':
+        aVal = a.avgPrice;
+        bVal = b.avgPrice;
+        break;
+      case 'totalSavings':
+        aVal = a.totalSavings;
+        bVal = b.totalSavings;
+        break;
+      default:
+        return 0;
+    }
+
+    return staplesSortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+
+  // Helper function to render sort indicator
+  const sortIndicator = (column) => {
+    if (staplesSortConfig.column === column) {
+      return staplesSortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return '';
+  };
 
   const html = `
     <div class="analysis-section">
@@ -975,22 +1044,22 @@ function renderStaples() {
         <span style="font-size: 20px;">▼</span>
       </div>
       <div id="staples-content" class="section-content">
-        <p style="margin-bottom: 15px; color: #666;">Products purchased in ${staples.length > 0 ? staples[0].totalMonths : 0} months</p>
+        <p style="margin-bottom: 15px; color: #666;">Products purchased in ${sortedStaples.length > 0 ? sortedStaples[0].totalMonths : 0} months</p>
 
         <table class="analysis-table">
           <thead>
             <tr>
-              <th>Product</th>
-              <th>Category</th>
-              <th>Frequency</th>
-              <th>Total Units</th>
-              <th>Total Spent</th>
-              <th>Avg Price</th>
-              <th>Total Saved</th>
+              <th class="sortable" onclick="sortStaples('name')">Product${sortIndicator('name')}</th>
+              <th class="sortable" onclick="sortStaples('category')">Category${sortIndicator('category')}</th>
+              <th class="sortable" onclick="sortStaples('frequency')">Frequency${sortIndicator('frequency')}</th>
+              <th class="sortable" onclick="sortStaples('totalQuantity')">Total Units${sortIndicator('totalQuantity')}</th>
+              <th class="sortable" onclick="sortStaples('totalSpent')">Total Spent${sortIndicator('totalSpent')}</th>
+              <th class="sortable" onclick="sortStaples('avgPrice')">Avg Price${sortIndicator('avgPrice')}</th>
+              <th class="sortable" onclick="sortStaples('totalSavings')">Total Saved${sortIndicator('totalSavings')}</th>
             </tr>
           </thead>
           <tbody>
-            ${staples.slice(0, 20).map(item => `
+            ${sortedStaples.slice(0, 20).map(item => `
               <tr onclick="showProductDetail('${item.name.replace(/'/g, "\\'")}')">
                 <td><strong>${item.name}</strong></td>
                 <td>${item.category}</td>
@@ -1004,7 +1073,7 @@ function renderStaples() {
           </tbody>
         </table>
 
-        ${staples.length > 20 ? `<p style="margin-top: 10px; text-align: center; color: #666;">Showing top 20 of ${staples.length} staple products</p>` : ''}
+        ${sortedStaples.length > 20 ? `<p style="margin-top: 10px; text-align: center; color: #666;">Showing top 20 of ${sortedStaples.length} staple products</p>` : ''}
       </div>
     </div>
   `;
