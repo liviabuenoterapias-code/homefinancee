@@ -96,6 +96,7 @@ class GroceryAnalysis {
 
       if (frequency >= minMonths) {
         const totalQuantity = purchases.reduce((sum, p) => sum + p.quantity, 0);
+        const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
         const avgQuantity = totalQuantity / purchases.length;
         const avgPrice = purchases.reduce((sum, p) => sum + p.unitPrice, 0) / purchases.length;
         const totalDiscount = purchases.reduce((sum, p) => sum + p.discount, 0);
@@ -107,6 +108,8 @@ class GroceryAnalysis {
           frequency: frequency,
           totalMonths: monthCount,
           purchaseCount: purchases.length,
+          totalQuantity: totalQuantity,
+          totalSpent: totalSpent,
           avgQuantity: avgQuantity,
           avgPrice: avgPrice,
           avgDiscount: avgDiscount,

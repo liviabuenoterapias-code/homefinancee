@@ -524,15 +524,18 @@ function parseReceiptText(text, filename) {
     if (itemMatch) {
       const name = itemMatch[1].trim();
       const weight = parseFloat(itemMatch[2].replace(',', '.'));
-      const pricePerUnit = parseFloat(itemMatch[3].replace(',', '.'));
+      const pricePerKg = parseFloat(itemMatch[3].replace(',', '.'));
       const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
 
       lastItem = {
-        name: name + ' (' + weight + 'kg)',
+        name: name,
         quantity: 1,
         unitPrice: totalPrice,
         totalPrice: totalPrice,
-        discount: 0
+        discount: 0,
+        weight: weight,
+        pricePerKg: pricePerKg,
+        isWeightBased: true
       };
       receipt.items.push(lastItem);
       matched = true;
@@ -563,11 +566,14 @@ function parseReceiptText(text, filename) {
         const totalPrice = parseFloat(weightLineMatch[3].replace(',', '.'));
 
         lastItem = {
-          name: name + ' (' + weight + 'kg)',
+          name: name,
           quantity: 1,
           unitPrice: totalPrice,
           totalPrice: totalPrice,
-          discount: 0
+          discount: 0,
+          weight: weight,
+          pricePerKg: pricePerKg,
+          isWeightBased: true
         };
         receipt.items.push(lastItem);
         matched = true;
@@ -977,7 +983,8 @@ function renderStaples() {
               <th>Product</th>
               <th>Category</th>
               <th>Frequency</th>
-              <th>Avg Qty</th>
+              <th>Total Units</th>
+              <th>Total Spent</th>
               <th>Avg Price</th>
               <th>Total Saved</th>
             </tr>
@@ -988,7 +995,8 @@ function renderStaples() {
                 <td><strong>${item.name}</strong></td>
                 <td>${item.category}</td>
                 <td>${item.frequency}/${item.totalMonths}</td>
-                <td>${item.avgQuantity.toFixed(1)}</td>
+                <td>${item.totalQuantity}</td>
+                <td><strong>${item.totalSpent.toFixed(2)} kr</strong></td>
                 <td>${item.avgPrice.toFixed(2)} kr</td>
                 <td style="color: #28a745;">${item.totalSavings > 0 ? '-' + item.totalSavings.toFixed(2) : '0.00'} kr</td>
               </tr>
@@ -1171,27 +1179,65 @@ function showProductDetail(productName) {
 
   const stats = history.statistics;
 
+  // Check if this is a weight-based product
+  const isWeightBased = history.purchases.some(p => p.weight && p.pricePerKg);
+
   let trend = '📊 Stable';
   if (stats.priceChange > 5) trend = '📈 Increasing';
   else if (stats.priceChange < -5) trend = '📉 Decreasing';
 
+  // Calculate weight-based statistics if applicable
+  let weightStats = null;
+  if (isWeightBased) {
+    const weightPrices = history.purchases.filter(p => p.pricePerKg).map(p => p.pricePerKg);
+    weightStats = {
+      min: Math.min(...weightPrices),
+      max: Math.max(...weightPrices),
+      avg: weightPrices.reduce((a, b) => a + b, 0) / weightPrices.length,
+      change: ((weightPrices[weightPrices.length - 1] - weightPrices[0]) / weightPrices[0] * 100)
+    };
+  }
+
   document.getElementById('modal-content').innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
     <h2>${productName}</h2>
-    <p style="color: #666; margin-bottom: 20px;">${history.category}</p>
+    <p style="color: #666; margin-bottom: 20px;">${history.category} ${isWeightBased ? '⚖️ Sold by weight' : ''}</p>
+
+    ${isWeightBased ? `
+      <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <h3 style="color: #2e7d32; margin-bottom: 10px;">📊 Price per Kilogram</h3>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">LOWEST</div>
+            <div style="font-size: 24px; font-weight: bold; color: #28a745;">${weightStats.min.toFixed(2)} kr/kg</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">AVERAGE</div>
+            <div style="font-size: 24px; font-weight: bold;">${weightStats.avg.toFixed(2)} kr/kg</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">HIGHEST</div>
+            <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${weightStats.max.toFixed(2)} kr/kg</div>
+          </div>
+        </div>
+        <div style="margin-top: 10px; text-align: center; color: #666;">
+          <strong>Price Change:</strong> ${weightStats.change > 0 ? '+' : ''}${weightStats.change.toFixed(1)}% per kg
+        </div>
+      </div>
+    ` : ''}
 
     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
       <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
-        <div style="color: #666; font-size: 12px;">LOWEST PRICE</div>
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'LOWEST TOTAL' : 'LOWEST PRICE'}</div>
         <div style="font-size: 24px; font-weight: bold; color: #28a745;">${stats.min.price.toFixed(2)} kr</div>
         <div style="font-size: 11px; color: #999;">${stats.min.date}</div>
       </div>
       <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
-        <div style="color: #666; font-size: 12px;">AVERAGE</div>
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'AVG TOTAL' : 'AVERAGE'}</div>
         <div style="font-size: 24px; font-weight: bold;">${stats.avg.toFixed(2)} kr</div>
       </div>
       <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
-        <div style="color: #666; font-size: 12px;">HIGHEST PRICE</div>
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'HIGHEST TOTAL' : 'HIGHEST PRICE'}</div>
         <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${stats.max.price.toFixed(2)} kr</div>
         <div style="font-size: 11px; color: #999;">${stats.max.date}</div>
       </div>
@@ -1209,7 +1255,8 @@ function showProductDetail(productName) {
         <thead>
           <tr>
             <th>Date</th>
-            <th>Qty</th>
+            ${isWeightBased ? '<th>Weight</th>' : '<th>Qty</th>'}
+            ${isWeightBased ? '<th>Price/kg</th>' : ''}
             <th>Unit Price</th>
             <th>Discount</th>
             <th>Net Price</th>
@@ -1218,16 +1265,20 @@ function showProductDetail(productName) {
         <tbody>
           ${history.purchases.map((p, idx) => {
             const netPrice = p.totalPrice - p.discount;
-            const prevPrice = idx > 0 ? history.purchases[idx - 1].unitPrice : p.unitPrice;
-            const priceChange = ((p.unitPrice - prevPrice) / prevPrice * 100).toFixed(1);
+
+            // For weight-based items, compare price per kg instead of total
+            const currentPrice = isWeightBased && p.pricePerKg ? p.pricePerKg : p.unitPrice;
+            const prevPrice = idx > 0 ? (isWeightBased && history.purchases[idx - 1].pricePerKg ? history.purchases[idx - 1].pricePerKg : history.purchases[idx - 1].unitPrice) : currentPrice;
+            const priceChange = ((currentPrice - prevPrice) / prevPrice * 100).toFixed(1);
             const changeIndicator = idx > 0 && Math.abs(priceChange) > 2 ?
               (priceChange > 0 ? ` ⚠+${priceChange}%` : ` ✓${priceChange}%`) : '';
 
             return `
               <tr>
                 <td>${p.date}</td>
-                <td>${p.quantity}</td>
-                <td>${p.unitPrice.toFixed(2)} kr${changeIndicator}</td>
+                ${isWeightBased ? `<td>${p.weight ? p.weight.toFixed(3) + ' kg' : '—'}</td>` : `<td>${p.quantity}</td>`}
+                ${isWeightBased ? `<td>${p.pricePerKg ? p.pricePerKg.toFixed(2) + ' kr/kg' + changeIndicator : '—'}</td>` : ''}
+                <td>${p.unitPrice.toFixed(2)} kr${!isWeightBased ? changeIndicator : ''}</td>
                 <td style="color: #28a745;">${p.discount > 0 ? '-' + p.discount.toFixed(2) : '0.00'}</td>
                 <td><strong>${netPrice.toFixed(2)} kr</strong></td>
               </tr>
