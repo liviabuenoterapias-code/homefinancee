@@ -129,7 +129,18 @@ To verify the parser is working correctly:
 4. Verify item count matches your receipt
 5. Check that total amount matches
 
+## Analysis Tab
+
+The Analysis tab provides insights into your grocery shopping patterns:
+- **Staple Products**: Items purchased regularly (70%+ of months)
+- **Category Spending**: Pie chart breakdown by food category
+- **Discount Analysis**: Track savings and products frequently on sale
+- **Price Trends**: Monitor price changes for specific products over time
+
 ## Common Issues
+
+**Q: Analysis tab showing "No Data Yet"?**
+A: This was caused by a JavaScript error in product-categories.js. Fixed! The encoding fix function now properly escapes regex metacharacters like "?" before creating regular expressions.
 
 **Q: Some items still missing?**
 A: Enable debug mode to see which lines aren't matching. Common causes:
