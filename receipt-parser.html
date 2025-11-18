@@ -73,7 +73,7 @@ h1 { color: #764ba2; text-align: center; margin-bottom: 30px; }
       </div>
       <div class="stat-card">
         <div class="stat-value" id="statItems">0</div>
-        <div class="stat-label">Total Items</div>
+        <div class="stat-label">Products (Items)</div>
       </div>
       <div class="stat-card">
         <div class="stat-value" id="statSpent">0 kr</div>
@@ -190,14 +190,17 @@ function parseReceiptText(text, filename) {
 
   const lines = text.split('\n').map(l => l.trim());
 
-  // Extract store - look for Willys or first substantial line
+  // Extract store - look for Willys store name (not discount lines)
   for (let line of lines) {
-    if (line.toLowerCase().includes('willys')) {
+    const lower = line.toLowerCase();
+    // Match "Willys" but NOT "Willys Plus:" (discount line)
+    if (lower.includes('willys') && !lower.includes('willys plus:') && !lower.includes('rabatt')) {
       receipt.store = line;
       break;
     }
   }
   if (!receipt.store) {
+    // Fallback to first substantial line
     for (let line of lines) {
       if (line && !line.includes('---') && !line.includes('===') && line.length > 2 && line.length < 50) {
         receipt.store = line;
@@ -434,24 +437,32 @@ function displayAllReceipts() {
   });
 
   // Update stats
-  const totalItems = allReceipts.reduce((sum, r) => sum + r.items.length, 0);
+  const totalProducts = allReceipts.reduce((sum, r) => sum + r.items.length, 0);
+  const totalItems = allReceipts.reduce((sum, r) => {
+    return sum + r.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+  }, 0);
   const totalSpent = allReceipts.reduce((sum, r) => sum + r.totalAmount, 0);
   const totalSaved = allReceipts.reduce((sum, r) => sum + r.totalDiscount, 0);
 
   document.getElementById('statReceipts').textContent = allReceipts.length;
-  document.getElementById('statItems').textContent = totalItems;
+  document.getElementById('statItems').textContent = `${totalProducts} (${totalItems})`;
   document.getElementById('statSpent').textContent = totalSpent.toFixed(0) + ' kr';
   document.getElementById('statSaved').textContent = totalSaved.toFixed(0) + ' kr';
   document.getElementById('stats').style.display = 'block';
 
   // Display receipts
   const container = document.getElementById('receipts');
-  container.innerHTML = allReceipts.map((receipt, index) => `
+  container.innerHTML = allReceipts.map((receipt, index) => {
+    // Calculate total items (sum of quantities)
+    const totalItemCount = receipt.items.reduce((sum, item) => sum + item.quantity, 0);
+    const productCount = receipt.items.length;
+
+    return `
     <div class="receipt-card">
       <div class="receipt-header">
         <div class="receipt-info">
           <div class="receipt-date">${receipt.date} ${receipt.time}</div>
-          <div class="receipt-store">${receipt.store} • ${receipt.items.length} items</div>
+          <div class="receipt-store">${receipt.store} • ${productCount} products (${totalItemCount} items)</div>
         </div>
         <div class="receipt-total">${receipt.totalAmount.toFixed(2)} kr</div>
         <button class="btn btn-delete" onclick="deleteReceipt(${index})">🗑️ Delete</button>
@@ -495,7 +506,8 @@ function displayAllReceipts() {
         </details>
       ` : ''}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function updateItemName(receiptIndex, itemIndex, newName) {
