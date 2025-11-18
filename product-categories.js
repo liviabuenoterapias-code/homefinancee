@@ -411,9 +411,123 @@ function standardizeProduct(rawName) {
   return fixed;
 }
 
-// Function to get category
+// Function to get category with keyword-based fallback
 function getCategory(standardizedName) {
-  return CATEGORY_MAPPING[standardizedName] || 'Other';
+  // First try exact match
+  if (CATEGORY_MAPPING[standardizedName]) {
+    return CATEGORY_MAPPING[standardizedName];
+  }
+
+  // Fallback: keyword-based detection
+  const name = standardizedName.toUpperCase();
+
+  // Dairy products
+  if (name.match(/MJÖLK|MILK|YOGH|YOGHURT|FILMJÖLK|GRÄDDE|CREAM/)) {
+    return 'Dairy';
+  }
+
+  // Cheese
+  if (name.match(/OST|CHEESE|BRIE|CHEDDAR|MOZZARELL|FETA|GOUDA|EDAMER|PRÄST/)) {
+    return 'Dairy - Cheese';
+  }
+
+  // Butter
+  if (name.match(/SMÖR|BUTTER|MARGARIN/)) {
+    return 'Dairy - Butter';
+  }
+
+  // Eggs
+  if (name.match(/ÄGG|EGG/)) {
+    return 'Dairy - Eggs';
+  }
+
+  // Bread & Bakery
+  if (name.match(/BRÖD|BREAD|LIMPA|LEVAIN|CIABATTA|BAGEL|BULLE|SNÄCKA|KAKA|COOKIE|CROISSANT|SKOTTE|KNÄCKE|CRISPBREAD/)) {
+    return 'Bread & Bakery';
+  }
+
+  // Meat & Proteins
+  if (name.match(/KÖTT|MEAT|KORV|SAUSAGE|SKINKA|HAM|BACON|SALAMI|FLÄSK|PORK|KALKON|TURKEY|KYCKLING|CHICKEN|KÖTTBULL|MEATBALL|LEVERPASTEJ/)) {
+    return 'Meat & Proteins';
+  }
+
+  // Fish
+  if (name.match(/FISK|FISH|LAX|SALMON|TONFISK|TUNA|SILL|RÄKA|SHRIMP/)) {
+    return 'Meat & Proteins';
+  }
+
+  // Beverages
+  if (name.match(/JUICE|LÄSK|SODA|COLA|FANTA|KAFFE|COFFEE|TE\b|TEA|VATTEN|WATER/)) {
+    return 'Beverages';
+  }
+
+  // Wine & Alcohol
+  if (name.match(/VIN|WINE|ÖL|BEER|CIDER|SPRIT|VODKA|WHISKY/)) {
+    return 'Alcoholic Beverages';
+  }
+
+  // Produce (Fruits & Vegetables)
+  if (name.match(/TOMAT|TOMATO|GURKA|CUCUMBER|SALLAD|LETTUCE|SALAD|PAPRIKA|PEPPER|MOROT|CARROT|LÖK|ONION|POTATIS|POTATO|ÄPPLE|APPLE|BANAN|BANANA|APELSIN|ORANGE|DRUV|GRAPE|AVOKADO|AVOCADO|SPENAT|SPINACH|BROCCOLI|BLOMKÅL|CAULIFLOWER|INGEFÄRA|GINGER|VITLÖK|GARLIC|PERSILJA|PARSLEY|DILL|BASILIKA|BASIL|GRÄSLÖK|CHIVE/)) {
+    return 'Produce';
+  }
+
+  // Frozen Foods
+  if (name.match(/PIZZA|FRYST|FROZEN|POMMES|FRIES|NUGGET|GLASS|ICE.?CREAM/)) {
+    return 'Frozen Foods';
+  }
+
+  // Pasta & Grains
+  if (name.match(/PASTA|PENNE|SPAGHETTI|MAKARONER|TORTELLONI|RAVIOLI|RIS|RICE|QUINOA|COUSCOUS|BULGUR/)) {
+    return 'Pantry - Pasta';
+  }
+
+  // Sauces & Condiments
+  if (name.match(/SÅS|SAUCE|KETCHUP|SENAP|MUSTARD|MAJONNÄS|MAYO|DRESSING|VINÄGER|VINEGAR|OLJA|OIL/)) {
+    return 'Pantry - Sauces';
+  }
+
+  // Spreads
+  if (name.match(/MARMELAD|JAM|HONUNG|HONEY|NUTELLA|JORDNÖT/)) {
+    return 'Condiments & Spreads';
+  }
+
+  // Breakfast & Cereals
+  if (name.match(/FLINGOR|CEREAL|MÜSLI|MUESLI|GRANOLA|HAVREGRYN|OATS|CORNFLAKES/)) {
+    return 'Breakfast & Cereals';
+  }
+
+  // Snacks
+  if (name.match(/CHIPS|DOODLES|CHOKLAD|CHOCOLATE|GODIS|CANDY|SNACKS|NÖTTER|NUTS|POPCORN/)) {
+    return 'Snacks';
+  }
+
+  // Spices
+  if (name.match(/KRYDDA|SPICE|SALT|PEPPAR|PEPPER|PULVER.*LÖK|PULVER.*VITLÖK|CURRY|PAPRIKA.*PULVER/)) {
+    return 'Pantry - Spices';
+  }
+
+  // Household
+  if (name.match(/SERVETT|NAPKIN|PAPPER|PAPER|DISK|DISH|TVÄTT|LAUNDRY|RENGÖR|CLEAN|STÄD|AVFALLS|GARBAGE|TRASH|PÅSE|BAG|FOLIE|WRAP|BAKPAPPER/)) {
+    return 'Household';
+  }
+
+  // Personal Care
+  if (name.match(/TAND|TOOTH|SCHAMPO|SHAMPOO|TVÅL|SOAP|KRÄM|CREAM|LOTION|BINDOR|RAKBLAD|RAZOR|DEODORANT|PARFYM|VITAMIN/)) {
+    return 'Personal Care';
+  }
+
+  // Pet Food
+  if (name.match(/KATT|CAT|HUND|DOG|HUSDJUR|PET/)) {
+    return 'Pet Food';
+  }
+
+  // Prepared Foods
+  if (name.match(/SALLAD.*FÄRDIG|GRATÄNG|GRATIN|LASAGNE|SOPPA|SOUP/)) {
+    return 'Prepared Foods';
+  }
+
+  // If still no match, return Other
+  return 'Other';
 }
 
 // Export for use in HTML
