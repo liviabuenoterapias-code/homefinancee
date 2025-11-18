@@ -132,13 +132,30 @@ To verify the parser is working correctly:
 ## Common Issues
 
 **Q: Some items still missing?**
-A: Enable debug mode to see which lines aren't matching. The pattern might need adjustment for specific item formats.
+A: Enable debug mode to see which lines aren't matching. Common causes:
+- **Multiple items on one line** (e.g., "ITEM1 12,90 ITEM2 2st*15,00 30,00") - Cannot be automatically split. You'll need to manually add the second item after parsing.
+- **Unusual formatting** - The pattern might need adjustment for specific item formats.
+
+**Q: Swedish characters showing as "?"**
+A: This is a PDF encoding issue. The parser now includes "?" in the character class as a fallback, so items like "?PPLE" (ÄPPLE), "MJ?LK" (MJÖLK), and "R?KT" (RÖKT) will still be captured. The name will show with "?" but you can edit it in the table.
+
+**Q: PANT (bottle deposits) not captured?**
+A: Should be fixed! PANT lines like "+PANT ENG PET <=1L 1,00" are now supported.
 
 **Q: Wrong section being parsed?**
 A: Check debug info to see the detected section boundaries. The receipt might have unusual markers.
 
 **Q: Prices incorrect?**
 A: Verify the CSV export. If consistently wrong, check decimal separator handling (comma vs period).
+
+**Q: Cheese/deli items with weight missing?**
+A: The parser now handles 3-line formats:
+```
+GOUDA 28%
+Willys Plus:
+1,217kg*85,90kr/kg 104,54
+```
+All three lines are combined into one item.
 
 ## Browser Compatibility
 
