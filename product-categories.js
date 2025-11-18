@@ -384,7 +384,9 @@ const CATEGORY_MAPPING = {
 function fixEncoding(text) {
   let fixed = text;
   for (const [wrong, correct] of Object.entries(ENCODING_FIXES)) {
-    fixed = fixed.replace(new RegExp(wrong, 'g'), correct);
+    // Escape special regex characters like ? * + . [ ] ( ) etc.
+    const escaped = wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    fixed = fixed.replace(new RegExp(escaped, 'g'), correct);
   }
   return fixed;
 }
