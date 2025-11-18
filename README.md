@@ -139,8 +139,16 @@ A: Enable debug mode to see which lines aren't matching. Common causes:
 **Q: Swedish characters showing as "?"**
 A: This is a PDF encoding issue. The parser now includes "?" in the character class as a fallback, so items like "?PPLE" (ÄPPLE), "MJ?LK" (MJÖLK), and "R?KT" (RÖKT) will still be captured. The name will show with "?" but you can edit it in the table.
 
-**Q: PANT (bottle deposits) not captured?**
-A: Should be fixed! PANT lines like "+PANT ENG PET <=1L 1,00" are now supported.
+**Q: How are PANT (bottle deposits) handled?**
+A: PANT fees are added to the previous beverage item's price, not counted as separate items.
+Example:
+```
+APELSINJUICE 2st*34,90 69,80
++PANT ENG PET <=1L 2st*1,00 2,00
+```
+Result: 2 items (juice) with total price 71,80 (69,80 + 2,00)
+
+This matches how Willys counts items on receipts.
 
 **Q: Wrong section being parsed?**
 A: Check debug info to see the detected section boundaries. The receipt might have unusual markers.
