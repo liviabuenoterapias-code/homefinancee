@@ -221,65 +221,45 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
   <!-- Shopping List Tab -->
   <div id="shopping-list-tab" class="tab-content">
     <div style="margin-bottom: 20px;">
-      <h2>🛒 Smart Shopping List</h2>
-      <p style="color: #666; margin: 10px 0;">Upload this week's Willys promotional flyer (reklamblad) to get personalized shopping recommendations based on your purchase history!</p>
+      <h2>🛒 My Shopping List</h2>
+      <p style="color: #666; margin: 10px 0;">Smart shopping list based on your purchase history</p>
     </div>
 
-    <div style="text-align: center; margin-bottom: 20px;">
-      <label style="display: inline-flex; align-items: center; cursor: pointer; background: #f5f5f5; padding: 10px 20px; border-radius: 5px;">
-        <input type="checkbox" id="reklamDebugMode" style="margin-right: 10px;">
-        <span>🐛 Debug Mode (show raw PDF text)</span>
-      </label>
+    <!-- Action Buttons -->
+    <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+      <button class="btn" onclick="generateSuggestions()" style="background: linear-gradient(135deg, #28a745, #20c997);">
+        💡 Generate Suggestions
+      </button>
+      <button class="btn" onclick="clearCheckedItems()">
+        ✓ Clear Checked
+      </button>
+      <button class="btn" onclick="addManualItem()">
+        ➕ Add Item
+      </button>
     </div>
 
-    <!-- Upload Reklamblad -->
-    <div class="upload-box" onclick="document.getElementById('reklamInput').click()">
-      <div style="font-size: 48px; margin-bottom: 10px;">📰</div>
-      <h3>Upload Willys Reklamblad (Promotional Flyer)</h3>
-      <p style="color: #666; margin-top: 10px;">Upload the PDF of this week's deals</p>
-      <input type="file" id="reklamInput" accept=".pdf" style="display:none;">
+    <!-- Suggestions Section -->
+    <div id="suggestions-section" style="display: none; margin-bottom: 30px;">
+      <h3 style="color: #764ba2; margin-bottom: 15px;">💡 Suggested Items</h3>
+      <div id="suggestions-list"></div>
     </div>
 
-    <div id="reklamStatus"></div>
-
-    <!-- Debug Output -->
-    <div id="reklamDebugOutput" style="display: none; background: #f9f9f9; padding: 20px; border-radius: 8px; margin: 20px 0; max-height: 400px; overflow-y: auto;">
-      <h3 style="color: #764ba2; margin-bottom: 10px;">🐛 Debug Output</h3>
-      <div id="debugText" style="font-family: monospace; font-size: 12px; white-space: pre-wrap;"></div>
-    </div>
-
-    <!-- Shopping List Content -->
-    <div id="shopping-list-content" style="display: none;">
-      <!-- Summary Stats -->
-      <div class="stats" style="margin-top: 30px;">
-        <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
-          <div class="stat-value" id="matchedItems">0</div>
-          <div class="stat-label">Items You Buy On Sale</div>
-        </div>
-        <div class="stat-card" style="background: linear-gradient(135deg, #ffc107, #ff9800);">
-          <div class="stat-value" id="potentialSavings">0 kr</div>
-          <div class="stat-label">Potential Savings</div>
-        </div>
-        <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8, #138496);">
-          <div class="stat-value" id="totalPromos">0</div>
-          <div class="stat-label">Total Promotions</div>
-        </div>
-        <div class="stat-card" style="background: linear-gradient(135deg, #dc3545, #c82333);">
-          <div class="stat-value" id="urgentBuys">0</div>
-          <div class="stat-label">Buy Now!</div>
+    <!-- Shopping List -->
+    <div id="shopping-list-main">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 style="color: #764ba2;">📋 My List</h3>
+        <div id="list-stats" style="color: #666; font-size: 14px;">
+          0 items • Estimated: 0 kr
         </div>
       </div>
 
-      <!-- Smart Recommendations -->
-      <div style="margin-top: 30px;">
-        <h3 style="color: #764ba2; margin-bottom: 15px;">💡 Smart Recommendations</h3>
-        <div id="recommendations"></div>
-      </div>
+      <div id="shopping-list-items"></div>
 
-      <!-- All Promotions -->
-      <div style="margin-top: 30px;">
-        <h3 style="color: #764ba2; margin-bottom: 15px;">📋 All Promotions This Week</h3>
-        <div id="allPromotions"></div>
+      <!-- Empty State -->
+      <div id="shopping-list-empty" style="text-align: center; padding: 60px 20px; color: #999;">
+        <div style="font-size: 64px; margin-bottom: 20px;">🛒</div>
+        <h3>Your shopping list is empty</h3>
+        <p style="margin-top: 10px;">Click "Generate Suggestions" to get started, or add items manually</p>
       </div>
     </div>
   </div>
@@ -3445,6 +3425,375 @@ function showReklamMessage(message, type) {
     }, 5000);
   }
 }
+
+// ===== SHOPPING LIST FUNCTIONALITY =====
+
+// Store categories in the order you walk through the store
+const STORE_CATEGORIES = [
+  { id: 'dryck', name: 'Dryck', icon: '🥤' },
+  { id: 'frukt-gront', name: 'Frukt & Grönt', icon: '🍎' },
+  { id: 'brod', name: 'Bröd', icon: '🍞' },
+  { id: 'kylskap', name: 'Kylskåp', icon: '🥛' },
+  { id: 'fryst', name: 'Fryst', icon: '❄️' },
+  { id: 'kryddor', name: 'Kryddor', icon: '🌶️' },
+  { id: 'skafferi', name: 'Skafferi', icon: '🥫' },
+  { id: 'snacks-godis', name: 'Snacks/Godis', icon: '🍫' },
+  { id: 'halsa-skonhet', name: 'Hälsa & Skönhet', icon: '💄' },
+  { id: 'icke-mat', name: 'Icke-mat', icon: '📦' },
+  { id: 'stad', name: 'Städ', icon: '🧹' }
+];
+
+// Load shopping list from localStorage
+function loadShoppingList() {
+  const saved = localStorage.getItem('shoppingList_v2');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save shopping list to localStorage
+function saveShoppingList(list) {
+  localStorage.setItem('shoppingList_v2', JSON.stringify(list));
+}
+
+// Generate suggestions based on purchase history
+function generateSuggestions() {
+  if (allReceipts.length === 0) {
+    showMessage('Upload some receipts first to get personalized suggestions', 'info');
+    return;
+  }
+
+  const productLibrary = buildProductLibrary();
+  const customMappings = loadCustomMappings();
+  const suggestions = [];
+
+  // Group products by shopping list name
+  const groupedProducts = {};
+
+  productLibrary.forEach(product => {
+    const shoppingListName = product.shoppingListName || product.standardName;
+
+    if (!groupedProducts[shoppingListName]) {
+      groupedProducts[shoppingListName] = {
+        name: shoppingListName,
+        category: product.category,
+        purchases: [],
+        totalSpent: 0,
+        lastSeen: product.lastSeen
+      };
+    }
+
+    groupedProducts[shoppingListName].purchases.push({
+      date: new Date(product.lastSeen),
+      count: product.count,
+      spent: product.totalSpent
+    });
+
+    groupedProducts[shoppingListName].totalSpent += product.totalSpent;
+  });
+
+  // Calculate frequency and create suggestions
+  Object.values(groupedProducts).forEach(group => {
+    const purchases = group.purchases;
+    if (purchases.length === 0) return;
+
+    // Calculate average price
+    const totalCount = purchases.reduce((sum, p) => sum + p.count, 0);
+    const avgPrice = group.totalSpent / totalCount;
+
+    // Calculate days since last purchase
+    const lastPurchase = new Date(Math.max(...purchases.map(p => p.date)));
+    const daysSince = Math.floor((new Date() - lastPurchase) / (1000 * 60 * 60 * 24));
+
+    // Calculate frequency (if multiple purchases)
+    let avgDaysBetween = 999;
+    if (purchases.length >= 2) {
+      const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
+      let totalDays = 0;
+      for (let i = 1; i < sortedDates.length; i++) {
+        totalDays += (sortedDates[i] - sortedDates[i-1]) / (1000 * 60 * 60 * 24);
+      }
+      avgDaysBetween = totalDays / (sortedDates.length - 1);
+    }
+
+    // Determine if this should be suggested
+    const isOverdue = daysSince >= avgDaysBetween * 0.8;
+    const purchaseCount = purchases.length;
+
+    if (isOverdue || purchaseCount >= 3) {
+      suggestions.push({
+        name: group.name,
+        category: group.category,
+        avgPrice: avgPrice,
+        daysSince: daysSince,
+        avgDaysBetween: avgDaysBetween,
+        isOverdue: isOverdue,
+        purchaseCount: purchaseCount
+      });
+    }
+  });
+
+  // Sort by urgency
+  suggestions.sort((a, b) => {
+    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
+    return a.daysSince - b.daysSince;
+  });
+
+  renderSuggestions(suggestions);
+}
+
+// Render suggestions
+function renderSuggestions(suggestions) {
+  const section = document.getElementById('suggestions-section');
+  const list = document.getElementById('suggestions-list');
+
+  if (suggestions.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+
+  let html = '';
+  suggestions.forEach(sug => {
+    const frequencyText = sug.avgDaysBetween < 999
+      ? `Buy every ${Math.round(sug.avgDaysBetween)} days`
+      : `Bought ${sug.purchaseCount} times`;
+
+    const urgencyClass = sug.isOverdue ? 'background: #fff3cd; border-left: 4px solid #ffc107;' : 'background: #f9f9f9; border-left: 4px solid #ccc;';
+
+    html += `
+      <div style="${urgencyClass} padding: 15px; margin-bottom: 10px; border-radius: 5px;">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+          <div style="flex: 1;">
+            <div style="font-weight: bold; font-size: 16px; margin-bottom: 5px;">
+              ${sug.isOverdue ? '⚠️ ' : ''}${sug.name}
+            </div>
+            <div style="font-size: 13px; color: #666; margin-bottom: 5px;">
+              ${frequencyText} • Last bought ${sug.daysSince} days ago
+            </div>
+            <div style="font-size: 13px; color: #666;">
+              ~${sug.avgPrice.toFixed(2)} kr
+            </div>
+          </div>
+          <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.category}', ${sug.avgPrice})" style="margin: 0;">
+            + Add
+          </button>
+        </div>
+      </div>
+    `;
+  });
+
+  list.innerHTML = html;
+}
+
+// Add suggestion to shopping list
+function addSuggestionToList(name, category, estimatedPrice) {
+  const list = loadShoppingList();
+
+  // Check if already in list
+  if (list.find(item => item.name.toLowerCase() === name.toLowerCase())) {
+    showMessage('Item already in your list', 'info');
+    return;
+  }
+
+  const newItem = {
+    id: Date.now().toString(),
+    name: name,
+    category: mapCategoryToStore(category),
+    checked: false,
+    estimatedPrice: estimatedPrice,
+    isRecurrent: true,
+    addedDate: new Date().toISOString()
+  };
+
+  list.push(newItem);
+  saveShoppingList(list);
+  renderShoppingList();
+  showMessage(`Added "${name}" to your list`, 'success');
+}
+
+// Map analysis category to store category
+function mapCategoryToStore(analysisCategory) {
+  const mapping = {
+    'Beverages': 'dryck',
+    'Alcoholic Beverages': 'dryck',
+    'Produce': 'frukt-gront',
+    'Bread & Bakery': 'brod',
+    'Dairy': 'kylskap',
+    'Dairy - Cheese': 'kylskap',
+    'Dairy - Butter': 'kylskap',
+    'Dairy - Eggs': 'kylskap',
+    'Dairy - Yogurt': 'kylskap',
+    'Meat & Proteins': 'kylskap',
+    'Frozen Foods': 'fryst',
+    'Pantry - Spices': 'kryddor',
+    'Pantry - Pasta': 'skafferi',
+    'Pantry - Grains': 'skafferi',
+    'Pantry - Sauces': 'skafferi',
+    'Condiments & Spreads': 'skafferi',
+    'Breakfast & Cereals': 'skafferi',
+    'Snacks': 'snacks-godis',
+    'Personal Care': 'halsa-skonhet',
+    'Household': 'icke-mat',
+    'Other': 'icke-mat'
+  };
+
+  return mapping[analysisCategory] || 'skafferi';
+}
+
+// Render shopping list
+function renderShoppingList() {
+  const list = loadShoppingList();
+  const itemsDiv = document.getElementById('shopping-list-items');
+  const emptyDiv = document.getElementById('shopping-list-empty');
+  const statsDiv = document.getElementById('list-stats');
+
+  if (list.length === 0) {
+    itemsDiv.innerHTML = '';
+    emptyDiv.style.display = 'block';
+    statsDiv.textContent = '0 items • Estimated: 0 kr';
+    return;
+  }
+
+  emptyDiv.style.display = 'none';
+
+  // Group by category
+  const grouped = {};
+  STORE_CATEGORIES.forEach(cat => {
+    grouped[cat.id] = [];
+  });
+
+  list.forEach(item => {
+    if (grouped[item.category]) {
+      grouped[item.category].push(item);
+    } else {
+      // Default to skafferi if category not found
+      grouped['skafferi'].push(item);
+    }
+  });
+
+  // Calculate stats
+  const uncheckedCount = list.filter(i => !i.checked).length;
+  const estimatedTotal = list
+    .filter(i => !i.checked)
+    .reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+
+  statsDiv.textContent = `${uncheckedCount} items • Estimated: ${estimatedTotal.toFixed(0)} kr`;
+
+  // Render by category
+  let html = '';
+  STORE_CATEGORIES.forEach(category => {
+    const items = grouped[category.id];
+    if (items.length === 0) return;
+
+    const uncheckedInCategory = items.filter(i => !i.checked).length;
+
+    html += `
+      <div style="margin-bottom: 20px;">
+        <div style="background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 12px 15px; border-radius: 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+          <span>${category.icon} ${category.name}</span>
+          <span style="background: rgba(255,255,255,0.3); padding: 2px 10px; border-radius: 12px; font-size: 12px;">
+            ${uncheckedInCategory}
+          </span>
+        </div>
+        <div style="background: #f9f9f9; padding: 10px; border-radius: 0 0 8px 8px;">
+          ${items.map(item => `
+            <div style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; ${item.checked ? 'opacity: 0.5;' : ''}">
+              <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;">
+              <div style="flex: 1;">
+                <div style="font-weight: 500; ${item.checked ? 'text-decoration: line-through;' : ''}">${item.name}</div>
+                ${item.estimatedPrice ? `<div style="font-size: 12px; color: #666; margin-top: 2px;">~${item.estimatedPrice.toFixed(2)} kr</div>` : ''}
+              </div>
+              <button onclick="deleteItem('${item.id}')" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                Delete
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  });
+
+  itemsDiv.innerHTML = html;
+}
+
+// Toggle item checked state
+function toggleItem(itemId) {
+  const list = loadShoppingList();
+  const item = list.find(i => i.id === itemId);
+  if (item) {
+    item.checked = !item.checked;
+    saveShoppingList(list);
+    renderShoppingList();
+  }
+}
+
+// Delete item
+function deleteItem(itemId) {
+  if (!confirm('Remove this item from your list?')) return;
+
+  const list = loadShoppingList();
+  const filtered = list.filter(i => i.id !== itemId);
+  saveShoppingList(filtered);
+  renderShoppingList();
+}
+
+// Clear checked items
+function clearCheckedItems() {
+  const list = loadShoppingList();
+  const unchecked = list.filter(i => !i.checked);
+
+  if (list.length === unchecked.length) {
+    showMessage('No checked items to clear', 'info');
+    return;
+  }
+
+  if (!confirm(`Remove ${list.length - unchecked.length} checked item(s)?`)) return;
+
+  saveShoppingList(unchecked);
+  renderShoppingList();
+  showMessage('Checked items cleared', 'success');
+}
+
+// Add manual item
+function addManualItem() {
+  const name = prompt('Item name:');
+  if (!name || !name.trim()) return;
+
+  const list = loadShoppingList();
+
+  // Ask for category
+  const categoryOptions = STORE_CATEGORIES.map((c, i) => `${i + 1}. ${c.icon} ${c.name}`).join('\n');
+  const categoryInput = prompt(`Select category:\n\n${categoryOptions}\n\nEnter number (1-${STORE_CATEGORIES.length}):`);
+
+  const categoryIndex = parseInt(categoryInput) - 1;
+  const category = (categoryIndex >= 0 && categoryIndex < STORE_CATEGORIES.length)
+    ? STORE_CATEGORIES[categoryIndex].id
+    : 'skafferi';
+
+  const newItem = {
+    id: Date.now().toString(),
+    name: name.trim(),
+    category: category,
+    checked: false,
+    estimatedPrice: 0,
+    isRecurrent: false,
+    addedDate: new Date().toISOString()
+  };
+
+  list.push(newItem);
+  saveShoppingList(list);
+  renderShoppingList();
+  showMessage(`Added "${name}" to your list`, 'success');
+}
+
+// Initialize shopping list when tab is opened
+document.addEventListener('DOMContentLoaded', () => {
+  // Render shopping list if there are items
+  const list = loadShoppingList();
+  if (list.length > 0) {
+    renderShoppingList();
+  }
+});
 
 </script>
 </body>
