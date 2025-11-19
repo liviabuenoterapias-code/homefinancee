@@ -835,16 +835,171 @@ function refreshAnalysis() {
       <p><strong>Period:</strong> ${summary.dateRange.start} to ${summary.dateRange.end} (${summary.monthCount} months)</p>
     </div>
 
+    <div id="tag-filter-section"></div>
     <div id="trends-section"></div>
     <div id="staples-section"></div>
     <div id="categories-section"></div>
     <div id="discounts-section"></div>
   `;
 
+  renderTagFilter();
   renderTrends();
   renderStaples();
   renderCategories();
   renderDiscounts();
+}
+
+// Get all unique tags from all products
+function getAllTags() {
+  const customMappings = loadCustomMappings();
+  const allTags = new Set();
+
+  Object.values(customMappings).forEach(mapping => {
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => allTags.add(tag));
+    }
+  });
+
+  return Array.from(allTags).sort();
+}
+
+// Show products with a specific tag
+function showProductsByTag(tag) {
+  const customMappings = loadCustomMappings();
+
+  // Find all products with this tag
+  const productNames = new Set();
+  Object.entries(customMappings).forEach(([rawName, mapping]) => {
+    if (mapping.tags && mapping.tags.includes(tag)) {
+      // Get the standardized name for this product
+      const standardName = mapping.standardName || window.ProductCategories.standardizeProduct(rawName);
+      productNames.add(standardName);
+    }
+  });
+
+  if (productNames.size === 0) {
+    alert(`No products found with tag "${tag}"`);
+    return;
+  }
+
+  // Get purchase data for these products
+  const productsData = [];
+  productNames.forEach(productName => {
+    const history = analysisInstance.getPriceHistory(productName);
+    if (history) {
+      const totalQuantity = history.purchases.reduce((sum, p) => sum + p.quantity, 0);
+      const totalSpent = history.purchases.reduce((sum, p) => sum + p.totalPrice, 0);
+      const totalDiscount = history.purchases.reduce((sum, p) => sum + p.discount, 0);
+
+      productsData.push({
+        name: productName,
+        category: history.category,
+        totalQuantity,
+        totalSpent,
+        totalDiscount,
+        purchases: history.purchases.length
+      });
+    }
+  });
+
+  // Sort by total spent
+  productsData.sort((a, b) => b.totalSpent - a.totalSpent);
+
+  // Calculate totals
+  const totalSpent = productsData.reduce((sum, p) => sum + p.totalSpent, 0);
+  const totalQuantity = productsData.reduce((sum, p) => sum + p.totalQuantity, 0);
+  const totalDiscount = productsData.reduce((sum, p) => sum + p.totalDiscount, 0);
+
+  // Display in modal
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🏷️ Products tagged with "${tag}"</h2>
+    <p style="color: #666; margin-bottom: 20px;">${productsData.length} products found</p>
+
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL QUANTITY</div>
+        <div style="font-size: 24px; font-weight: bold;">${totalQuantity}</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL SPENT</div>
+        <div style="font-size: 24px; font-weight: bold; color: #667eea;">${totalSpent.toFixed(2)} kr</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL SAVED</div>
+        <div style="font-size: 24px; font-weight: bold; color: #28a745;">${totalDiscount.toFixed(2)} kr</div>
+      </div>
+    </div>
+
+    <div style="max-height: 400px; overflow-y: auto;">
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Category</th>
+            <th>Total Qty</th>
+            <th>Total Spent</th>
+            <th>Purchases</th>
+            <th>Discounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${productsData.map(p => `
+            <tr style="cursor: pointer;" onclick="closeModal(); setTimeout(() => showProductDetail('${p.name.replace(/'/g, "\\'")}'), 100)">
+              <td><strong>${p.name}</strong></td>
+              <td>${p.category}</td>
+              <td>${p.totalQuantity}</td>
+              <td>${p.totalSpent.toFixed(2)} kr</td>
+              <td>${p.purchases} times</td>
+              <td style="color: ${p.totalDiscount > 0 ? '#28a745' : '#999'};">
+                ${p.totalDiscount > 0 ? '-' + p.totalDiscount.toFixed(2) + ' kr' : 'None'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Render tag filter section
+function renderTagFilter() {
+  const tags = getAllTags();
+
+  if (tags.length === 0) {
+    document.getElementById('tag-filter-section').innerHTML = '';
+    return;
+  }
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('tag-filter-content')">
+        <span class="section-title">🏷️ Filter by Tags</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="tag-filter-content" class="section-content">
+        <p style="margin-bottom: 15px; color: #666;">Click on a tag to see all products with that tag</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+          ${tags.map(tag => `
+            <button
+              onclick="showProductsByTag('${tag}')"
+              class="btn"
+              style="background: linear-gradient(135deg, #28a745, #20c997); padding: 8px 16px; font-size: 14px; display: inline-flex; align-items: center; gap: 6px;">
+              🏷️ ${tag}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('tag-filter-section').innerHTML = html;
 }
 
 function renderTrends() {
@@ -1059,9 +1214,16 @@ function renderStaples() {
             </tr>
           </thead>
           <tbody>
-            ${sortedStaples.slice(0, 20).map(item => `
+            ${sortedStaples.slice(0, 20).map(item => {
+              const tags = getProductTags(item.name);
+              return `
               <tr onclick="showProductDetail('${item.name.replace(/'/g, "\\'")}')">
-                <td><strong>${item.name}</strong></td>
+                <td>
+                  <strong>${item.name}</strong>
+                  ${tags.length > 0 ? `<br><div style="margin-top: 4px;">${tags.map(tag =>
+                    `<span style="background: #e8f5e9; color: #2e7d32; padding: 2px 6px; border-radius: 8px; font-size: 10px; margin-right: 4px;">🏷️ ${tag}</span>`
+                  ).join('')}</div>` : ''}
+                </td>
                 <td>${item.category}</td>
                 <td>${item.frequency}/${item.totalMonths}</td>
                 <td>${item.totalQuantity}</td>
@@ -1069,7 +1231,7 @@ function renderStaples() {
                 <td>${item.avgPrice.toFixed(2)} kr</td>
                 <td style="color: #28a745;">${item.totalSavings > 0 ? '-' + item.totalSavings.toFixed(2) : '0.00'} kr</td>
               </tr>
-            `).join('')}
+            `}).join('')}
           </tbody>
         </table>
 
@@ -1270,6 +1432,9 @@ function showProductDetail(productName) {
   // Get all available categories for dropdown
   const allCategories = getAllCategories();
 
+  // Get current tags for this product
+  const currentTags = getProductTags(productName);
+
   document.getElementById('modal-content').innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
     <h2>${productName}</h2>
@@ -1284,6 +1449,32 @@ function showProductDetail(productName) {
         `).join('')}
       </select>
       ${isWeightBased ? '<span style="color: #666;">⚖️ Sold by weight</span>' : ''}
+    </div>
+
+    <div style="margin-bottom: 20px; background: #f9f9f9; padding: 15px; border-radius: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <span style="color: #666; font-weight: bold;">🏷️ Tags:</span>
+        ${currentTags.length > 0 ? currentTags.map(tag => `
+          <span style="background: #667eea; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px;">
+            ${tag}
+            <span onclick="removeProductTag('${productName.replace(/'/g, "\\'")}', '${tag}')" style="cursor: pointer; font-weight: bold;">&times;</span>
+          </span>
+        `).join('') : '<span style="color: #999; font-size: 12px;">No tags yet</span>'}
+      </div>
+      <div style="display: flex; gap: 5px;">
+        <input
+          type="text"
+          id="new-tag-input"
+          placeholder="Add tag (e.g., coffee, hot beverage)"
+          onkeypress="if(event.key === 'Enter') addProductTag('${productName.replace(/'/g, "\\'")}')"
+          style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px;">
+        <button
+          onclick="addProductTag('${productName.replace(/'/g, "\\'")}')"
+          class="btn"
+          style="padding: 6px 15px; font-size: 13px;">
+          Add
+        </button>
+      </div>
     </div>
 
     ${isWeightBased ? `
@@ -1395,7 +1586,8 @@ function updateProductCategory(standardName, newCategory) {
     if (!customMappings[rawName]) {
       customMappings[rawName] = {
         standardName: product.standardName,
-        category: newCategory
+        category: newCategory,
+        tags: []
       };
     } else {
       customMappings[rawName].category = newCategory;
@@ -1408,6 +1600,79 @@ function updateProductCategory(standardName, newCategory) {
   // Close and reopen modal to show updated category
   closeModal();
   setTimeout(() => showProductDetail(standardName), 100);
+}
+
+// Get tags for a product (returns array of unique tags across all raw names)
+function getProductTags(standardName) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  const allTags = new Set();
+  matchingProducts.forEach(product => {
+    const mapping = customMappings[product.rawName];
+    if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => allTags.add(tag));
+    }
+  });
+
+  return Array.from(allTags).sort();
+}
+
+// Update tags for a product
+function updateProductTags(standardName, tags) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    if (!customMappings[rawName]) {
+      customMappings[rawName] = {
+        standardName: product.standardName,
+        category: product.category,
+        tags: tags
+      };
+    } else {
+      customMappings[rawName].tags = tags;
+    }
+  });
+
+  // Save and refresh
+  saveCustomMappings(customMappings);
+
+  // Reopen modal to show updated tags
+  closeModal();
+  setTimeout(() => showProductDetail(standardName), 100);
+}
+
+// Add a tag to a product
+function addProductTag(standardName) {
+  const tagInput = document.getElementById('new-tag-input');
+  const newTag = tagInput.value.trim().toLowerCase();
+
+  if (!newTag) {
+    alert('Tag cannot be empty');
+    return;
+  }
+
+  const currentTags = getProductTags(standardName);
+  if (currentTags.includes(newTag)) {
+    alert('This tag already exists');
+    tagInput.value = '';
+    return;
+  }
+
+  currentTags.push(newTag);
+  updateProductTags(standardName, currentTags);
+}
+
+// Remove a tag from a product
+function removeProductTag(standardName, tag) {
+  const currentTags = getProductTags(standardName);
+  const filtered = currentTags.filter(t => t !== tag);
+  updateProductTags(standardName, filtered);
 }
 
 // Show detailed products for a category
