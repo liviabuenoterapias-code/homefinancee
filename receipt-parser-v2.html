@@ -2923,7 +2923,7 @@ async function processReklamblad(file) {
   }
 }
 
-// Parse promotions from reklamblad text
+// Parse promotions from reklamblad text using spatial clustering
 function parsePromotions(textItems, debugMode = false) {
   const promotions = [];
   let debugLog = '';
@@ -2933,142 +2933,155 @@ function parsePromotions(textItems, debugMode = false) {
     'för dig med willysplus', 'willysplus', 'spara', 'jämförpris', 'dagspris', 'dgrspris',
     'gäller ej', 'gäller', 'djupfryst', 'djupfrysta', 'köp/hushåll', 'max', 'pant',
     'olika sorter', 'per förp', 'per st', 'per kg', 'kampanjpris', 'extrapris',
-    'extra vergine', 'ca-pris', 'ord pris', 'jfr-pris', 'medlemspris',
-    'från', 'till', 'söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag'
+    'extra vergine', 'ca-pris', 'ord pris', 'jfr-pris', 'medlemspris', 'lägsta',
+    'från', 'till', 'söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag',
+    'heta priser', 'alltid billigt', 'tillfälligt parti', 'rött pris', 'reservation',
+    'ed1', 'vår affärsidé', 'sveriges billigaste', 'priserna gäller'
   ];
 
   if (debugMode) {
-    debugLog += '\n\n=== PARSING ANALYSIS ===\n\n';
+    debugLog += '\n\n=== SPATIAL CLUSTERING ANALYSIS ===\n\n';
   }
 
-  // Group text items by approximate Y position (same line)
-  const lineGroups = {};
-  const yTolerance = 5;
+  // Step 1: Find potential product names (capitalized text, not blacklisted)
+  const productCandidates = [];
+  const priceCandidates = [];
 
   textItems.forEach(item => {
     const text = item.text.trim();
+    const textLower = text.toLowerCase();
     if (!text || text.length < 2) return;
 
-    // Find or create a line group
-    let foundGroup = false;
-    for (const y in lineGroups) {
-      if (Math.abs(parseFloat(y) - item.y) < yTolerance) {
-        lineGroups[y].push(item);
-        foundGroup = true;
-        break;
-      }
+    // Check if this is a product name candidate (mostly uppercase, not blacklisted)
+    const isUppercase = /^[A-ZÅÄÖ]/.test(text);
+    const isAllCaps = text === text.toUpperCase() && /[A-ZÅÄÖ]/.test(text);
+    const notBlacklisted = !blacklist.some(term => textLower.includes(term));
+
+    if (isAllCaps && notBlacklisted && text.length >= 3 && text.length <= 50) {
+      // Could be a product name
+      productCandidates.push({
+        text: text,
+        x: item.x,
+        y: item.y,
+        page: item.page
+      });
     }
 
-    if (!foundGroup) {
-      lineGroups[item.y] = [item];
+    // Check if this looks like a price
+    // Pattern 1: Just numbers "14", "90", "19", etc.
+    if (/^\d{1,3}$/.test(text)) {
+      priceCandidates.push({
+        text: text,
+        value: parseFloat(text),
+        x: item.x,
+        y: item.y,
+        page: item.page,
+        type: 'digit'
+      });
+    }
+
+    // Pattern 2: "2 FÖR" indicator
+    if (text.toLowerCase().includes('för') && /\d/.test(text)) {
+      priceCandidates.push({
+        text: text,
+        value: null,
+        x: item.x,
+        y: item.y,
+        page: item.page,
+        type: 'multi-buy'
+      });
     }
   });
 
-  // Process each line group
+  if (debugMode) {
+    debugLog += `Found ${productCandidates.length} product candidates\n`;
+    debugLog += `Found ${priceCandidates.length} price candidates\n\n`;
+  }
+
+  // Step 2: Try to construct prices from digit fragments
+  // In the PDF, "14:90" might be split into "14", ":", "90"
+  const constructedPrices = [];
+
+  for (let i = 0; i < priceCandidates.length; i++) {
+    const pc = priceCandidates[i];
+    if (pc.type !== 'digit') continue;
+
+    // Look for another digit nearby (within 20 pixels) that could be decimal part
+    for (let j = i + 1; j < priceCandidates.length; j++) {
+      const next = priceCandidates[j];
+      if (next.type !== 'digit' || next.page !== pc.page) continue;
+
+      const distance = Math.sqrt(Math.pow(next.x - pc.x, 2) + Math.pow(next.y - pc.y, 2));
+
+      if (distance < 30 && next.value < 100) {
+        // This might be "kr.ore" like "14" and "90" = 14.90
+        constructedPrices.push({
+          value: parseFloat(`${pc.value}.${next.value}`),
+          text: `${pc.value}:${next.value}`,
+          x: pc.x,
+          y: pc.y,
+          page: pc.page
+        });
+      }
+    }
+  }
+
+  if (debugMode) {
+    debugLog += `Constructed ${constructedPrices.length} prices from fragments\n\n`;
+    constructedPrices.slice(0, 10).forEach(p => {
+      debugLog += `  Price: ${p.text} at (${p.x.toFixed(0)}, ${p.y.toFixed(0)})\n`;
+    });
+    debugLog += '\n';
+  }
+
+  // Step 3: Match product names with nearby prices
   const seen = new Set();
 
-  Object.values(lineGroups).forEach(group => {
-    // Sort by X position (left to right)
-    group.sort((a, b) => a.x - b.x);
+  productCandidates.forEach(product => {
+    const productLower = product.text.toLowerCase();
 
-    // Combine into a line of text
-    const lineText = group.map(item => item.text).join(' ');
-    const lineLower = lineText.toLowerCase();
-
-    // Skip if line contains blacklisted terms
-    if (blacklist.some(term => lineLower.includes(term))) {
+    // Skip blacklisted product names
+    if (blacklist.some(term => productLower.includes(term))) {
+      if (debugMode) debugLog += `❌ BLACKLIST: ${product.text}\n`;
       return;
     }
 
-    // Look for price patterns in the line
-    // Pattern 1: "PRODUCT 2 för 30" or "2 för 30"
-    const multiPattern = /(\d+)\s+för\s+([\d,]+)/gi;
-    const multiMatch = multiPattern.exec(lineText);
+    // Find the closest price (within 200 pixels)
+    let closestPrice = null;
+    let closestDistance = Infinity;
 
-    // Pattern 2: Price with colon "19:90" or "19:-"
-    const colonPricePattern = /([\d]+):([\d\-]+)/g;
-    const colonMatch = colonPricePattern.exec(lineText);
+    constructedPrices.forEach(price => {
+      if (price.page !== product.page) return;
 
-    // Pattern 3: Price with decimal "19.90" or "19,90"
-    const decimalPricePattern = /([\d]+)[,\.]([\d]{2})/g;
-    const decimalMatch = decimalPricePattern.exec(lineText);
+      const distance = Math.sqrt(
+        Math.pow(price.x - product.x, 2) +
+        Math.pow(price.y - product.y, 2)
+      );
 
-    // Pattern 4: "/kg" price indicator
-    const perKgPattern = /([\d,\.]+)\s*(?:kr)?\s*\/\s*kg/gi;
-    const perKgMatch = perKgPattern.exec(lineText);
+      if (distance < 200 && distance < closestDistance && price.value > 1 && price.value < 500) {
+        closestPrice = price;
+        closestDistance = distance;
+      }
+    });
 
-    let price = null;
-    let priceText = null;
-    let quantity = 1;
+    if (closestPrice) {
+      const key = product.text.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
 
-    if (multiMatch) {
-      // Multi-buy deal
-      quantity = parseInt(multiMatch[1]);
-      const totalPrice = parseFloat(multiMatch[2].replace(',', '.'));
-      price = totalPrice / quantity;
-      priceText = `${quantity} för ${multiMatch[2]}`;
-    } else if (perKgMatch) {
-      // Per kg price
-      price = parseFloat(perKgMatch[1].replace(',', '.'));
-      priceText = perKgMatch[0];
-    } else if (colonMatch) {
-      // Colon format price
-      const kr = colonMatch[1];
-      const ore = colonMatch[2] === '-' ? '00' : colonMatch[2];
-      price = parseFloat(`${kr}.${ore}`);
-      priceText = `${kr}:${ore === '00' ? '-' : ore}`;
-    } else if (decimalMatch) {
-      // Decimal price
-      price = parseFloat(`${decimalMatch[1]}.${decimalMatch[2]}`);
-      priceText = `${decimalMatch[1]}.${decimalMatch[2]}`;
-    }
+        promotions.push({
+          name: product.text,
+          price: closestPrice.value,
+          priceText: closestPrice.text + ' kr',
+          rawMatch: `${product.text} @ ${closestPrice.text}`
+        });
 
-    if (price && price > 0 && price < 1000) {
-      // Try to extract product name from the line
-      // Remove the price part and other junk
-      let productName = lineText
-        .replace(/\d+\s+för\s+[\d,]+/gi, '')
-        .replace(/[\d]+:[[\d\-]+/g, '')
-        .replace(/[\d]+[,\.][\d]{2}/g, '')
-        .replace(/kr\/kg/gi, '')
-        .replace(/\/kg/gi, '')
-        .replace(/\s+kr\s*/gi, '')
-        .trim();
-
-      // Clean up product name
-      productName = productName
-        .replace(/^\W+/, '') // Remove leading non-word chars
-        .replace(/\W+$/, '') // Remove trailing non-word chars
-        .replace(/\s+/g, ' ') // Normalize spaces
-        .trim()
-        .toUpperCase();
-
-      // Validate product name
-      if (productName.length >= 3 &&
-          productName.length <= 50 &&
-          !/^\d+$/.test(productName) && // Not just numbers
-          !blacklist.some(term => productName.toLowerCase().includes(term))) {
-
-        // Check for duplicates
-        const key = productName.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-
-          promotions.push({
-            name: productName,
-            price: price,
-            priceText: priceText || `${price.toFixed(2)} kr`,
-            rawMatch: lineText
-          });
+        if (debugMode) {
+          debugLog += `✅ MATCH: "${product.text}" → ${closestPrice.text} kr (distance: ${closestDistance.toFixed(0)}px)\n`;
         }
       }
     } else if (debugMode) {
-      // Log why this line was skipped
-      if (blacklist.some(term => lineLower.includes(term))) {
-        debugLog += `❌ BLACKLISTED: "${lineText}"\n`;
-      } else if (!multiMatch && !perKgMatch && !colonMatch && !decimalMatch) {
-        debugLog += `⚠️ NO PRICE: "${lineText}"\n`;
-      }
+      debugLog += `⚠️ NO PRICE NEARBY: "${product.text}"\n`;
     }
   });
 
