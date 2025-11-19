@@ -860,15 +860,15 @@ function refreshAnalysis() {
       <p><strong>Period:</strong> ${summary.dateRange.start} to ${summary.dateRange.end} (${summary.monthCount} months)</p>
     </div>
 
-    <div id="tag-filter-section"></div>
     <div id="trends-section"></div>
+    <div id="tag-filter-section"></div>
     <div id="staples-section"></div>
     <div id="categories-section"></div>
     <div id="discounts-section"></div>
   `;
 
-  renderTagFilter();
   renderTrends();
+  renderTagFilter();
   renderStaples();
   renderCategories();
   renderDiscounts();
