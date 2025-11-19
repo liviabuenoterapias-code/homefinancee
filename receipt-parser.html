@@ -795,6 +795,7 @@ function switchTab(tabName) {
 
 // Analysis functions
 let analysisInstance = null;
+let modalNavigationContext = null; // Track where we came from (e.g., {type: 'tag', tag: 'coffee'})
 
 function refreshAnalysis() {
   if (!allReceipts || allReceipts.length === 0) {
@@ -948,7 +949,7 @@ function showProductsByTag(tag) {
         </thead>
         <tbody>
           ${productsData.map(p => `
-            <tr style="cursor: pointer;" onclick="closeModal(); setTimeout(() => showProductDetail('${p.name.replace(/'/g, "\\'")}'), 100)">
+            <tr style="cursor: pointer;" onclick="showProductDetailFromTag('${p.name.replace(/'/g, "\\'")}', '${tag}')">
               <td><strong>${p.name}</strong></td>
               <td>${p.category}</td>
               <td>${p.totalQuantity}</td>
@@ -1440,6 +1441,14 @@ function showProductDetail(productName) {
 
   document.getElementById('modal-content').innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
+    ${modalNavigationContext && modalNavigationContext.type === 'tag' ? `
+      <button
+        onclick="showProductsByTag('${modalNavigationContext.tag}')"
+        class="btn"
+        style="margin-bottom: 15px; padding: 8px 16px; font-size: 13px; background: #6c757d;">
+        ← Back to "${modalNavigationContext.tag}" products
+      </button>
+    ` : ''}
     <h2>${productName}</h2>
     <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
       <span style="color: #666;">Category:</span>
@@ -1582,6 +1591,13 @@ function showProductDetail(productName) {
 function closeModal() {
   document.getElementById('product-modal').style.display = 'none';
   document.getElementById('modal-overlay').style.display = 'none';
+  modalNavigationContext = null; // Clear navigation context
+}
+
+// Show product detail from tag filter (with back navigation)
+function showProductDetailFromTag(productName, tag) {
+  modalNavigationContext = { type: 'tag', tag: tag };
+  showProductDetail(productName);
 }
 
 // Update product category from analysis tab
@@ -1609,9 +1625,13 @@ function updateProductCategory(standardName, newCategory) {
   // Save and refresh
   saveCustomMappings(customMappings);
 
-  // Close and reopen modal to show updated category
+  // Preserve navigation context before closing
+  const savedContext = modalNavigationContext;
   closeModal();
-  setTimeout(() => showProductDetail(standardName), 100);
+  setTimeout(() => {
+    modalNavigationContext = savedContext;
+    showProductDetail(standardName);
+  }, 100);
 }
 
 // Get tags for a product (returns array of unique tags across all raw names)
@@ -1654,9 +1674,13 @@ function updateProductTags(standardName, tags) {
   // Save and refresh
   saveCustomMappings(customMappings);
 
-  // Reopen modal to show updated tags
+  // Preserve navigation context before closing
+  const savedContext = modalNavigationContext;
   closeModal();
-  setTimeout(() => showProductDetail(standardName), 100);
+  setTimeout(() => {
+    modalNavigationContext = savedContext;
+    showProductDetail(standardName);
+  }, 100);
 }
 
 // Add a tag to a product
