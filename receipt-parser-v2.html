@@ -225,6 +225,13 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
       <p style="color: #666; margin: 10px 0;">Upload this week's Willys promotional flyer (reklamblad) to get personalized shopping recommendations based on your purchase history!</p>
     </div>
 
+    <div style="text-align: center; margin-bottom: 20px;">
+      <label style="display: inline-flex; align-items: center; cursor: pointer; background: #f5f5f5; padding: 10px 20px; border-radius: 5px;">
+        <input type="checkbox" id="reklamDebugMode" style="margin-right: 10px;">
+        <span>🐛 Debug Mode (show raw PDF text)</span>
+      </label>
+    </div>
+
     <!-- Upload Reklamblad -->
     <div class="upload-box" onclick="document.getElementById('reklamInput').click()">
       <div style="font-size: 48px; margin-bottom: 10px;">📰</div>
@@ -234,6 +241,12 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
     </div>
 
     <div id="reklamStatus"></div>
+
+    <!-- Debug Output -->
+    <div id="reklamDebugOutput" style="display: none; background: #f9f9f9; padding: 20px; border-radius: 8px; margin: 20px 0; max-height: 400px; overflow-y: auto;">
+      <h3 style="color: #764ba2; margin-bottom: 10px;">🐛 Debug Output</h3>
+      <div id="debugText" style="font-family: monospace; font-size: 12px; white-space: pre-wrap;"></div>
+    </div>
 
     <!-- Shopping List Content -->
     <div id="shopping-list-content" style="display: none;">
@@ -2837,6 +2850,7 @@ async function processReklamblad(file) {
     const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
 
     let allTextItems = [];
+    const debugMode = document.getElementById('reklamDebugMode').checked;
 
     // Extract text with position data from all pages
     for (let i = 1; i <= pdf.numPages; i++) {
@@ -2855,8 +2869,35 @@ async function processReklamblad(file) {
       });
     }
 
+    // Debug output
+    if (debugMode) {
+      const debugOutput = document.getElementById('reklamDebugOutput');
+      const debugText = document.getElementById('debugText');
+
+      let debugInfo = `=== RAW PDF TEXT (${allTextItems.length} items) ===\n\n`;
+
+      // Sort by page, then Y (top to bottom), then X (left to right)
+      allTextItems.sort((a, b) => {
+        if (a.page !== b.page) return a.page - b.page;
+        if (Math.abs(a.y - b.y) > 5) return b.y - a.y; // Y descending (top to bottom)
+        return a.x - b.x; // X ascending (left to right)
+      });
+
+      // Show first 200 items
+      allTextItems.slice(0, 200).forEach((item, i) => {
+        debugInfo += `[${i}] Page ${item.page}, X:${item.x.toFixed(1)}, Y:${item.y.toFixed(1)} → "${item.text}"\n`;
+      });
+
+      if (allTextItems.length > 200) {
+        debugInfo += `\n... (showing first 200 of ${allTextItems.length} items)`;
+      }
+
+      debugText.textContent = debugInfo;
+      debugOutput.style.display = 'block';
+    }
+
     // Parse promotions from positioned text
-    currentPromotions = parsePromotions(allTextItems);
+    currentPromotions = parsePromotions(allTextItems, debugMode);
 
     if (currentPromotions.length === 0) {
       showReklamMessage('No promotions found in this flyer. Make sure it\'s a Willys promotional flyer.', 'error');
@@ -2883,8 +2924,9 @@ async function processReklamblad(file) {
 }
 
 // Parse promotions from reklamblad text
-function parsePromotions(textItems) {
+function parsePromotions(textItems, debugMode = false) {
   const promotions = [];
+  let debugLog = '';
 
   // Blacklist of common promotional text that's NOT products
   const blacklist = [
@@ -2894,6 +2936,10 @@ function parsePromotions(textItems) {
     'extra vergine', 'ca-pris', 'ord pris', 'jfr-pris', 'medlemspris',
     'från', 'till', 'söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag'
   ];
+
+  if (debugMode) {
+    debugLog += '\n\n=== PARSING ANALYSIS ===\n\n';
+  }
 
   // Group text items by approximate Y position (same line)
   const lineGroups = {};
@@ -3016,8 +3062,28 @@ function parsePromotions(textItems) {
           });
         }
       }
+    } else if (debugMode) {
+      // Log why this line was skipped
+      if (blacklist.some(term => lineLower.includes(term))) {
+        debugLog += `❌ BLACKLISTED: "${lineText}"\n`;
+      } else if (!multiMatch && !perKgMatch && !colonMatch && !decimalMatch) {
+        debugLog += `⚠️ NO PRICE: "${lineText}"\n`;
+      }
     }
   });
+
+  if (debugMode) {
+    debugLog += `\n=== FOUND ${promotions.length} PROMOTIONS ===\n`;
+    promotions.forEach((promo, i) => {
+      debugLog += `${i + 1}. ${promo.name} - ${promo.priceText}\n`;
+    });
+
+    // Append to debug output
+    const debugText = document.getElementById('debugText');
+    if (debugText) {
+      debugText.textContent += debugLog;
+    }
+  }
 
   return promotions;
 }
