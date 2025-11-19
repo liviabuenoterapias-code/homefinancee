@@ -1206,6 +1206,24 @@ function renderStaples() {
     return '';
   };
 
+  // Pre-build tag lookup map to avoid rebuilding product library multiple times
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const tagLookupMap = {};
+
+  // Build tag map once
+  sortedStaples.forEach(item => {
+    const allTags = new Set();
+    const matchingProducts = productLibrary.filter(p => p.standardName === item.name);
+    matchingProducts.forEach(product => {
+      const mapping = customMappings[product.rawName];
+      if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+        mapping.tags.forEach(tag => allTags.add(tag));
+      }
+    });
+    tagLookupMap[item.name] = Array.from(allTags).sort();
+  });
+
   const html = `
     <div class="analysis-section">
       <div class="section-header" onclick="toggleSection('staples-content')">
@@ -1229,7 +1247,7 @@ function renderStaples() {
           </thead>
           <tbody>
             ${sortedStaples.slice(0, 20).map(item => {
-              const tags = getProductTags(item.name);
+              const tags = tagLookupMap[item.name] || [];
               return `
               <tr onclick="showProductDetail('${item.name.replace(/'/g, "\\'")}')">
                 <td>
@@ -1817,6 +1835,23 @@ function showCategoryDetails(categoryName) {
   // Convert to array and sort by spending
   const products = Object.values(productMap).sort((a, b) => b.totalSpent - a.totalSpent);
 
+  // Pre-build tag lookup map to avoid rebuilding product library multiple times
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const tagLookupMap = {};
+
+  products.forEach(p => {
+    const allTags = new Set();
+    const matchingProducts = productLibrary.filter(prod => prod.standardName === p.name);
+    matchingProducts.forEach(product => {
+      const mapping = customMappings[product.rawName];
+      if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+        mapping.tags.forEach(tag => allTags.add(tag));
+      }
+    });
+    tagLookupMap[p.name] = Array.from(allTags).sort();
+  });
+
   detailsDiv.innerHTML = `
     <div style="border-top: 2px solid #ddd; padding-top: 20px;">
       <h3 style="color: #667eea; margin-bottom: 15px;">
@@ -1837,7 +1872,7 @@ function showCategoryDetails(categoryName) {
         <tbody>
           ${products.map(p => {
             const avgPrice = p.totalSpent / p.totalQuantity;
-            const tags = getProductTags(p.name);
+            const tags = tagLookupMap[p.name] || [];
             return `
               <tr style="cursor: pointer;" onclick="showProductDetail('${p.name.replace(/'/g, "\\'")}')">
                 <td>
