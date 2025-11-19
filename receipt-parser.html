@@ -179,6 +179,17 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
         </div>
       </div>
 
+      <!-- Tag Management -->
+      <div style="background: #e8f4f8; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <strong>🏷️ Tags:</strong>
+          <button onclick="showTagManager()" class="btn" style="padding: 8px 20px; background: #667eea;">Manage Tags</button>
+        </div>
+        <div style="font-size: 12px; color: #666; margin-top: 8px;">
+          View, rename, and delete tags. Tags help you organize products across multiple dimensions.
+        </div>
+      </div>
+
       <!-- Backup & Restore -->
       <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 15px 0;">
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
@@ -2399,11 +2410,20 @@ function showCategoryManager() {
           ${customCategories.map(cat => `
             <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
               <span style="font-weight: 500; color: #28a745;">${cat}</span>
-              <button
-                class="reset-btn"
-                onclick="handleDeleteCategory('${cat}')"
-                title="Delete this category"
-              >Delete</button>
+              <div style="display: flex; gap: 8px;">
+                <button
+                  class="btn"
+                  onclick="handleRenameCategory('${cat.replace(/'/g, "\\'")}')"
+                  style="padding: 6px 12px; font-size: 12px;"
+                  title="Rename this category"
+                >Rename</button>
+                <button
+                  class="reset-btn"
+                  onclick="handleDeleteCategory('${cat.replace(/'/g, "\\'")}')"
+                  style="padding: 6px 12px; font-size: 12px;"
+                  title="Delete this category"
+                >Delete</button>
+              </div>
             </div>
           `).join('')}
         </div>
@@ -2509,6 +2529,223 @@ function handleDeleteCategory(categoryName) {
   // Refresh the product library to show updated products
   if (allReceipts.length > 0) {
     renderProductLibrary(document.getElementById('productSearch').value);
+  }
+}
+
+// Rename a category globally
+function renameCategory(oldName, newName) {
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    alert('Category name cannot be empty');
+    return false;
+  }
+
+  if (oldName === trimmed) {
+    return true; // No change
+  }
+
+  const allCategories = getAllCategories();
+  if (allCategories.includes(trimmed) && trimmed !== oldName) {
+    alert('A category with this name already exists');
+    return false;
+  }
+
+  // Update custom categories list
+  const customCategories = loadCustomCategories();
+  const index = customCategories.indexOf(oldName);
+  if (index !== -1) {
+    customCategories[index] = trimmed;
+    saveCustomCategories(customCategories);
+  }
+
+  // Update all products using this category
+  const customMappings = loadCustomMappings();
+  let updated = false;
+  Object.keys(customMappings).forEach(rawName => {
+    if (customMappings[rawName].category === oldName) {
+      customMappings[rawName].category = trimmed;
+      updated = true;
+    }
+  });
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+
+  return true;
+}
+
+// Handle renaming a category
+function handleRenameCategory(oldName) {
+  const newName = prompt(`Rename category "${oldName}" to:`, oldName);
+  if (newName === null) return; // User cancelled
+
+  if (renameCategory(oldName, newName)) {
+    showCategoryManager(); // Refresh the modal
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+// Show tag management modal
+function showTagManager() {
+  const allTags = getAllTags();
+
+  if (allTags.length === 0) {
+    alert('No tags found. Add tags to your products first!');
+    return;
+  }
+
+  // Count products per tag
+  const customMappings = loadCustomMappings();
+  const tagCounts = {};
+  allTags.forEach(tag => tagCounts[tag] = 0);
+
+  Object.values(customMappings).forEach(mapping => {
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => {
+        if (tagCounts[tag] !== undefined) {
+          tagCounts[tag]++;
+        }
+      });
+    }
+  });
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🏷️ Tag Management</h2>
+    <p style="color: #666; margin-bottom: 20px;">Manage all your tags. Renaming a tag will update it across all products. Deleting a tag will remove it from all products.</p>
+
+    <div style="margin: 20px 0;">
+      <h3>All Tags (${allTags.length})</h3>
+      <div style="margin-top: 10px;">
+        ${allTags.sort().map(tag => `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <span style="font-weight: 500; color: #667eea; font-size: 14px;">${tag}</span>
+              <span style="color: #999; font-size: 12px; margin-left: 10px;">(${tagCounts[tag]} product${tagCounts[tag] !== 1 ? 's' : ''})</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button
+                class="btn"
+                onclick="handleRenameTag('${tag.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px; background: #667eea;"
+                title="Rename this tag"
+              >Rename</button>
+              <button
+                class="reset-btn"
+                onclick="handleDeleteTag('${tag.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Delete this tag"
+              >Delete</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Delete a tag globally
+function deleteTag(tagName) {
+  const customMappings = loadCustomMappings();
+  let updated = false;
+
+  Object.keys(customMappings).forEach(rawName => {
+    const mapping = customMappings[rawName];
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      const originalLength = mapping.tags.length;
+      mapping.tags = mapping.tags.filter(t => t !== tagName);
+      if (mapping.tags.length !== originalLength) {
+        updated = true;
+      }
+    }
+  });
+
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+}
+
+// Handle deleting a tag
+function handleDeleteTag(tagName) {
+  if (!confirm(`Delete tag "${tagName}"?\n\nThis tag will be removed from all products.`)) {
+    return;
+  }
+
+  deleteTag(tagName);
+
+  // Close modal if no tags left, otherwise refresh
+  const remainingTags = getAllTags();
+  if (remainingTags.length === 0) {
+    closeModal();
+    alert('All tags have been deleted.');
+  } else {
+    showTagManager(); // Refresh the modal
+  }
+
+  // Refresh the product library to show updated products
+  if (allReceipts.length > 0) {
+    renderProductLibrary(document.getElementById('productSearch').value);
+  }
+}
+
+// Rename a tag globally
+function renameTag(oldTag, newTag) {
+  const trimmed = newTag.trim().toLowerCase();
+  if (!trimmed) {
+    alert('Tag name cannot be empty');
+    return false;
+  }
+
+  if (oldTag === trimmed) {
+    return true; // No change
+  }
+
+  const allTags = getAllTags();
+  if (allTags.includes(trimmed) && trimmed !== oldTag) {
+    alert('A tag with this name already exists');
+    return false;
+  }
+
+  const customMappings = loadCustomMappings();
+  let updated = false;
+
+  Object.keys(customMappings).forEach(rawName => {
+    const mapping = customMappings[rawName];
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      const index = mapping.tags.indexOf(oldTag);
+      if (index !== -1) {
+        mapping.tags[index] = trimmed;
+        updated = true;
+      }
+    }
+  });
+
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+
+  return true;
+}
+
+// Handle renaming a tag
+function handleRenameTag(oldTag) {
+  const newTag = prompt(`Rename tag "${oldTag}" to:`, oldTag);
+  if (newTag === null) return; // User cancelled
+
+  if (renameTag(oldTag, newTag)) {
+    showTagManager(); // Refresh the modal
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
   }
 }
 
