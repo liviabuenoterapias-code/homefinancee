@@ -2285,7 +2285,7 @@ function renderProductLibrary(searchFilter = '') {
                   type="text"
                   list="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
                   placeholder="Add tag..."
-                  data-raw-product="${p.rawName}"
+                  data-raw-product="${p.rawName.replace(/"/g, '&quot;')}"
                   onkeypress="if(event.key === 'Enter') { addProductTagFromLibrary(this); this.value = ''; }"
                   style="font-size: 12px; padding: 4px 6px;"
                 />
