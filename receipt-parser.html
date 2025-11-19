@@ -1691,7 +1691,7 @@ function showProductDetail(productName) {
                 pointBorderWidth: 2
               },
               {
-                label: \`Average (\${weightStats.avg.toFixed(2)} kr/kg)\`,
+                label: 'Average (' + weightStats.avg.toFixed(2) + ' kr/kg)',
                 data: chartData.map(() => weightStats.avg),
                 borderColor: '#ffc107',
                 borderDash: [5, 5],
@@ -1715,9 +1715,9 @@ function showProductDetail(productName) {
                     if (context.datasetIndex === 0) {
                       const value = context.parsed.y;
                       const diffFromAvg = ((value - weightStats.avg) / weightStats.avg * 100).toFixed(1);
-                      return \`\${value.toFixed(2)} kr/kg (\${diffFromAvg > 0 ? '+' : ''}\${diffFromAvg}% vs avg)\`;
+                      return value.toFixed(2) + ' kr/kg (' + (diffFromAvg > 0 ? '+' : '') + diffFromAvg + '% vs avg)';
                     }
-                    return \`Average: \${context.parsed.y.toFixed(2)} kr/kg\`;
+                    return 'Average: ' + context.parsed.y.toFixed(2) + ' kr/kg';
                   }
                 }
               }
