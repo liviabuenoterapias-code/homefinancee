@@ -1451,13 +1451,28 @@ function showProductDetail(productName) {
 
   // Calculate weight-based statistics if applicable
   let weightStats = null;
+  let bestPriceDate = null;
   if (isWeightBased) {
     const weightPrices = history.purchases.filter(p => p.pricePerKg).map(p => p.pricePerKg);
+    const avgKgPrice = weightPrices.reduce((a, b) => a + b, 0) / weightPrices.length;
+    const minKgPrice = Math.min(...weightPrices);
+    const latestKgPrice = weightPrices[weightPrices.length - 1];
+
+    // Find best price purchase
+    const bestPurchase = history.purchases.reduce((best, current) => {
+      if (!current.pricePerKg) return best;
+      if (!best || current.pricePerKg < best.pricePerKg) return current;
+      return best;
+    }, null);
+    bestPriceDate = bestPurchase?.date;
+
     weightStats = {
-      min: Math.min(...weightPrices),
+      min: minKgPrice,
       max: Math.max(...weightPrices),
-      avg: weightPrices.reduce((a, b) => a + b, 0) / weightPrices.length,
-      change: ((weightPrices[weightPrices.length - 1] - weightPrices[0]) / weightPrices[0] * 100)
+      avg: avgKgPrice,
+      latest: latestKgPrice,
+      change: ((weightPrices[weightPrices.length - 1] - weightPrices[0]) / weightPrices[0] * 100),
+      currentVsAvg: ((latestKgPrice - avgKgPrice) / avgKgPrice * 100)
     };
   }
 
@@ -1531,23 +1546,44 @@ function showProductDetail(productName) {
 
     ${isWeightBased ? `
       <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-        <h3 style="color: #2e7d32; margin-bottom: 10px;">📊 Price per Kilogram</h3>
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+        <h3 style="color: #2e7d32; margin-bottom: 15px;">📊 Price per Kilogram Trend</h3>
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
           <div style="text-align: center;">
-            <div style="color: #666; font-size: 12px;">LOWEST</div>
-            <div style="font-size: 24px; font-weight: bold; color: #28a745;">${weightStats.min.toFixed(2)} kr/kg</div>
+            <div style="color: #666; font-size: 12px;">BEST PRICE</div>
+            <div style="font-size: 20px; font-weight: bold; color: #28a745;">🏆 ${weightStats.min.toFixed(2)} kr/kg</div>
+            <div style="font-size: 10px; color: #666; margin-top: 2px;">${bestPriceDate}</div>
           </div>
           <div style="text-align: center;">
             <div style="color: #666; font-size: 12px;">AVERAGE</div>
-            <div style="font-size: 24px; font-weight: bold;">${weightStats.avg.toFixed(2)} kr/kg</div>
+            <div style="font-size: 20px; font-weight: bold;">${weightStats.avg.toFixed(2)} kr/kg</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">LATEST</div>
+            <div style="font-size: 20px; font-weight: bold; color: ${weightStats.currentVsAvg < -5 ? '#28a745' : weightStats.currentVsAvg > 5 ? '#dc3545' : '#666'};">
+              ${weightStats.latest.toFixed(2)} kr/kg
+            </div>
+            <div style="font-size: 10px; color: ${weightStats.currentVsAvg < 0 ? '#28a745' : '#dc3545'}; margin-top: 2px;">
+              ${weightStats.currentVsAvg > 0 ? '⬆' : '⬇'} ${Math.abs(weightStats.currentVsAvg).toFixed(1)}% vs avg
+            </div>
           </div>
           <div style="text-align: center;">
             <div style="color: #666; font-size: 12px;">HIGHEST</div>
-            <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${weightStats.max.toFixed(2)} kr/kg</div>
+            <div style="font-size: 20px; font-weight: bold; color: #dc3545;">${weightStats.max.toFixed(2)} kr/kg</div>
           </div>
         </div>
-        <div style="margin-top: 10px; text-align: center; color: #666;">
-          <strong>Price Change:</strong> ${weightStats.change > 0 ? '+' : ''}${weightStats.change.toFixed(1)}% per kg
+
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+          <canvas id="price-per-kg-chart" style="max-height: 200px;"></canvas>
+        </div>
+
+        <div style="margin-top: 10px; text-align: center; padding: 10px; background: ${weightStats.currentVsAvg < 0 ? '#d4edda' : weightStats.currentVsAvg > 10 ? '#f8d7da' : '#fff3cd'}; border-radius: 5px;">
+          ${weightStats.currentVsAvg < -5 ?
+            `<strong style="color: #155724;">✓ Good Deal!</strong> Current price is ${Math.abs(weightStats.currentVsAvg).toFixed(1)}% below your average` :
+            weightStats.currentVsAvg > 10 ?
+            `<strong style="color: #721c24;">⚠ High Price!</strong> Current price is ${weightStats.currentVsAvg.toFixed(1)}% above your average` :
+            `<strong style="color: #856404;">💰 Normal Price</strong> Current price is near your average`
+          }
         </div>
       </div>
     ` : ''}
@@ -1599,11 +1635,15 @@ function showProductDetail(productName) {
             const changeIndicator = idx > 0 && Math.abs(priceChange) > 2 ?
               (priceChange > 0 ? ` ⚠+${priceChange}%` : ` ✓${priceChange}%`) : '';
 
+            // Check if this is the best price for weight-based products
+            const isBestPrice = isWeightBased && p.pricePerKg && p.date === bestPriceDate;
+            const isBelowAvg = isWeightBased && weightStats && p.pricePerKg && p.pricePerKg < weightStats.avg;
+
             return `
-              <tr>
-                <td>${p.date}</td>
+              <tr style="${isBestPrice ? 'background: #d4edda;' : isBelowAvg ? 'background: #f0f8f0;' : ''}">
+                <td>${p.date}${isBestPrice ? ' <strong style="color: #28a745;">🏆 BEST</strong>' : ''}</td>
                 ${isWeightBased ? `<td>${p.weight ? p.weight.toFixed(3) + ' kg' : '—'}</td>` : `<td>${p.quantity}</td>`}
-                ${isWeightBased ? `<td>${p.pricePerKg ? p.pricePerKg.toFixed(2) + ' kr/kg' + changeIndicator : '—'}</td>` : ''}
+                ${isWeightBased ? `<td><strong style="color: ${isBestPrice ? '#28a745' : isBelowAvg ? '#20c997' : 'inherit'};">${p.pricePerKg ? p.pricePerKg.toFixed(2) + ' kr/kg' + changeIndicator : '—'}</strong></td>` : ''}
                 <td>${p.unitPrice.toFixed(2)} kr${!isWeightBased ? changeIndicator : ''}</td>
                 <td style="color: #28a745;">${p.discount > 0 ? '-' + p.discount.toFixed(2) : '0.00'}</td>
                 <td><strong>${netPrice.toFixed(2)} kr</strong></td>
@@ -1617,6 +1657,96 @@ function showProductDetail(productName) {
 
   modal.style.display = 'block';
   overlay.style.display = 'block';
+
+  // Render kr/kg chart for weight-based products
+  if (isWeightBased && weightStats) {
+    setTimeout(() => {
+      const chartCanvas = document.getElementById('price-per-kg-chart');
+      if (chartCanvas) {
+        const chartData = history.purchases
+          .filter(p => p.pricePerKg)
+          .map(p => ({
+            x: p.date,
+            y: p.pricePerKg
+          }));
+
+        new Chart(chartCanvas, {
+          type: 'line',
+          data: {
+            labels: chartData.map(d => d.x),
+            datasets: [
+              {
+                label: 'Price per kg (kr/kg)',
+                data: chartData.map(d => d.y),
+                borderColor: '#2e7d32',
+                backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 5,
+                pointBackgroundColor: chartData.map(d =>
+                  d.y === weightStats.min ? '#28a745' :
+                  d.y < weightStats.avg ? '#20c997' : '#dc3545'
+                ),
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+              },
+              {
+                label: \`Average (\${weightStats.avg.toFixed(2)} kr/kg)\`,
+                data: chartData.map(() => weightStats.avg),
+                borderColor: '#ffc107',
+                borderDash: [5, 5],
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'top'
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    if (context.datasetIndex === 0) {
+                      const value = context.parsed.y;
+                      const diffFromAvg = ((value - weightStats.avg) / weightStats.avg * 100).toFixed(1);
+                      return \`\${value.toFixed(2)} kr/kg (\${diffFromAvg > 0 ? '+' : ''}\${diffFromAvg}% vs avg)\`;
+                    }
+                    return \`Average: \${context.parsed.y.toFixed(2)} kr/kg\`;
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: false,
+                title: {
+                  display: true,
+                  text: 'kr/kg'
+                },
+                ticks: {
+                  callback: function(value) {
+                    return value.toFixed(2) + ' kr';
+                  }
+                }
+              },
+              x: {
+                title: {
+                  display: true,
+                  text: 'Purchase Date'
+                }
+              }
+            }
+          }
+        });
+      }
+    }, 100);
+  }
 }
 
 function closeModal() {
