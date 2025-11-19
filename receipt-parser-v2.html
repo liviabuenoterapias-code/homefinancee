@@ -2836,18 +2836,27 @@ async function processReklamblad(file) {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
 
-    let fullText = '';
+    let allTextItems = [];
 
-    // Extract text from all pages
+    // Extract text with position data from all pages
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items.map(item => item.str).join(' ');
-      fullText += pageText + '\n';
+
+      // Store items with their position and text
+      textContent.items.forEach(item => {
+        allTextItems.push({
+          text: item.str,
+          x: item.transform[4],
+          y: item.transform[5],
+          height: item.height,
+          page: i
+        });
+      });
     }
 
-    // Parse promotions from text
-    currentPromotions = parsePromotions(fullText);
+    // Parse promotions from positioned text
+    currentPromotions = parsePromotions(allTextItems);
 
     if (currentPromotions.length === 0) {
       showReklamMessage('No promotions found in this flyer. Make sure it\'s a Willys promotional flyer.', 'error');
@@ -2874,75 +2883,141 @@ async function processReklamblad(file) {
 }
 
 // Parse promotions from reklamblad text
-function parsePromotions(text) {
+function parsePromotions(textItems) {
   const promotions = [];
-  const lines = text.split('\n');
 
-  // Common promotion patterns in Willys flyers:
-  // 1. "PRODUCT NAME 19.90" (simple price)
-  // 2. "PRODUCT NAME 2 för 30" (multi-buy)
-  // 3. "PRODUCT NAME 89.90 /kg" (per kg)
-  // 4. "PRODUCT NAME 10:-" (with :-)
-
-  // Regex patterns for different promo formats
-  const patterns = [
-    // Pattern: "PRODUCT 2 för 30" or "PRODUCT 3 för 50"
-    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+(\d+)\s+för\s+([\d,]+)/gi,
-
-    // Pattern: "PRODUCT 19.90 /kg" or "PRODUCT 89,90 kr/kg"
-    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+([\d,\.]+)\s*(?:kr)?\/kg/gi,
-
-    // Pattern: "PRODUCT 10:-" or "PRODUCT 19:90"
-    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+([\d]+):[\-\d]+/gi,
-
-    // Pattern: "PRODUCT 19.90" or "PRODUCT 29,50"
-    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+([\d,\.]+)\s*kr?/gi
+  // Blacklist of common promotional text that's NOT products
+  const blacklist = [
+    'för dig med willysplus', 'willysplus', 'spara', 'jämförpris', 'dagspris', 'dgrspris',
+    'gäller ej', 'gäller', 'djupfryst', 'djupfrysta', 'köp/hushåll', 'max', 'pant',
+    'olika sorter', 'per förp', 'per st', 'per kg', 'kampanjpris', 'extrapris',
+    'extra vergine', 'ca-pris', 'ord pris', 'jfr-pris', 'medlemspris',
+    'från', 'till', 'söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag'
   ];
 
-  const seen = new Set();
+  // Group text items by approximate Y position (same line)
+  const lineGroups = {};
+  const yTolerance = 5;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (line.length < 3) continue;
+  textItems.forEach(item => {
+    const text = item.text.trim();
+    if (!text || text.length < 2) return;
 
-    // Try each pattern
-    for (const pattern of patterns) {
-      const matches = [...line.matchAll(pattern)];
-
-      for (const match of matches) {
-        const productName = match[1].trim().toUpperCase();
-        let price = match[2];
-        let priceText = match[0];
-
-        // Skip if too short or looks like junk
-        if (productName.length < 3) continue;
-        if (/^\d+$/.test(productName)) continue; // Skip pure numbers
-
-        // Skip duplicates
-        const key = productName.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        // Parse price
-        let numericPrice = parseFloat(price.replace(',', '.'));
-
-        // For "X för Y" deals, calculate per-item price
-        if (match[3]) {
-          const totalPrice = parseFloat(match[3].replace(',', '.'));
-          const quantity = parseInt(match[2]);
-          numericPrice = totalPrice / quantity;
-          priceText = `${quantity} för ${match[3]}`;
-        }
-
-        promotions.push({
-          name: productName,
-          price: numericPrice,
-          priceText: priceText,
-          rawMatch: match[0]
-        });
+    // Find or create a line group
+    let foundGroup = false;
+    for (const y in lineGroups) {
+      if (Math.abs(parseFloat(y) - item.y) < yTolerance) {
+        lineGroups[y].push(item);
+        foundGroup = true;
+        break;
       }
     }
-  }
+
+    if (!foundGroup) {
+      lineGroups[item.y] = [item];
+    }
+  });
+
+  // Process each line group
+  const seen = new Set();
+
+  Object.values(lineGroups).forEach(group => {
+    // Sort by X position (left to right)
+    group.sort((a, b) => a.x - b.x);
+
+    // Combine into a line of text
+    const lineText = group.map(item => item.text).join(' ');
+    const lineLower = lineText.toLowerCase();
+
+    // Skip if line contains blacklisted terms
+    if (blacklist.some(term => lineLower.includes(term))) {
+      return;
+    }
+
+    // Look for price patterns in the line
+    // Pattern 1: "PRODUCT 2 för 30" or "2 för 30"
+    const multiPattern = /(\d+)\s+för\s+([\d,]+)/gi;
+    const multiMatch = multiPattern.exec(lineText);
+
+    // Pattern 2: Price with colon "19:90" or "19:-"
+    const colonPricePattern = /([\d]+):([\d\-]+)/g;
+    const colonMatch = colonPricePattern.exec(lineText);
+
+    // Pattern 3: Price with decimal "19.90" or "19,90"
+    const decimalPricePattern = /([\d]+)[,\.]([\d]{2})/g;
+    const decimalMatch = decimalPricePattern.exec(lineText);
+
+    // Pattern 4: "/kg" price indicator
+    const perKgPattern = /([\d,\.]+)\s*(?:kr)?\s*\/\s*kg/gi;
+    const perKgMatch = perKgPattern.exec(lineText);
+
+    let price = null;
+    let priceText = null;
+    let quantity = 1;
+
+    if (multiMatch) {
+      // Multi-buy deal
+      quantity = parseInt(multiMatch[1]);
+      const totalPrice = parseFloat(multiMatch[2].replace(',', '.'));
+      price = totalPrice / quantity;
+      priceText = `${quantity} för ${multiMatch[2]}`;
+    } else if (perKgMatch) {
+      // Per kg price
+      price = parseFloat(perKgMatch[1].replace(',', '.'));
+      priceText = perKgMatch[0];
+    } else if (colonMatch) {
+      // Colon format price
+      const kr = colonMatch[1];
+      const ore = colonMatch[2] === '-' ? '00' : colonMatch[2];
+      price = parseFloat(`${kr}.${ore}`);
+      priceText = `${kr}:${ore === '00' ? '-' : ore}`;
+    } else if (decimalMatch) {
+      // Decimal price
+      price = parseFloat(`${decimalMatch[1]}.${decimalMatch[2]}`);
+      priceText = `${decimalMatch[1]}.${decimalMatch[2]}`;
+    }
+
+    if (price && price > 0 && price < 1000) {
+      // Try to extract product name from the line
+      // Remove the price part and other junk
+      let productName = lineText
+        .replace(/\d+\s+för\s+[\d,]+/gi, '')
+        .replace(/[\d]+:[[\d\-]+/g, '')
+        .replace(/[\d]+[,\.][\d]{2}/g, '')
+        .replace(/kr\/kg/gi, '')
+        .replace(/\/kg/gi, '')
+        .replace(/\s+kr\s*/gi, '')
+        .trim();
+
+      // Clean up product name
+      productName = productName
+        .replace(/^\W+/, '') // Remove leading non-word chars
+        .replace(/\W+$/, '') // Remove trailing non-word chars
+        .replace(/\s+/g, ' ') // Normalize spaces
+        .trim()
+        .toUpperCase();
+
+      // Validate product name
+      if (productName.length >= 3 &&
+          productName.length <= 50 &&
+          !/^\d+$/.test(productName) && // Not just numbers
+          !blacklist.some(term => productName.toLowerCase().includes(term))) {
+
+        // Check for duplicates
+        const key = productName.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+
+          promotions.push({
+            name: productName,
+            price: price,
+            priceText: priceText || `${price.toFixed(2)} kr`,
+            rawMatch: lineText
+          });
+        }
+      }
+    }
+  });
 
   return promotions;
 }
