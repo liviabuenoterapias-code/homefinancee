@@ -1837,9 +1837,15 @@ function showCategoryDetails(categoryName) {
         <tbody>
           ${products.map(p => {
             const avgPrice = p.totalSpent / p.totalQuantity;
+            const tags = getProductTags(p.name);
             return `
               <tr style="cursor: pointer;" onclick="showProductDetail('${p.name.replace(/'/g, "\\'")}')">
-                <td><strong>${p.name}</strong></td>
+                <td>
+                  <strong>${p.name}</strong>
+                  ${tags.length > 0 ? `<br><div style="margin-top: 4px;">${tags.map(tag =>
+                    `<span style="background: #e8f5e9; color: #2e7d32; padding: 2px 6px; border-radius: 8px; font-size: 10px; margin-right: 4px;">🏷️ ${tag}</span>`
+                  ).join('')}</div>` : ''}
+                </td>
                 <td>${p.totalQuantity}</td>
                 <td>${p.totalSpent.toFixed(2)} kr</td>
                 <td>${avgPrice.toFixed(2)} kr</td>
