@@ -179,6 +179,19 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
         </div>
       </div>
 
+      <!-- Backup & Restore -->
+      <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <strong>💾 Backup & Restore:</strong>
+          <button onclick="exportCustomData()" class="btn" style="padding: 8px 20px; background: #007bff;">📥 Export Data</button>
+          <button onclick="document.getElementById('importFileInput').click()" class="btn" style="padding: 8px 20px; background: #6c757d;">📤 Import Data</button>
+          <input type="file" id="importFileInput" accept=".json" onchange="importCustomData(event)" style="display: none;">
+        </div>
+        <div style="font-size: 12px; color: #856404;">
+          💡 Export saves your custom categories, tags, and product mappings to a JSON file. Import to restore them later.
+        </div>
+      </div>
+
       <div style="margin-top: 15px;">
         <input type="text" id="productSearch" placeholder="🔍 Search products..." style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
       </div>
@@ -2233,6 +2246,84 @@ function showCategoryManager() {
 
   modal.style.display = 'block';
   overlay.style.display = 'block';
+}
+
+// Export custom data to JSON file
+function exportCustomData() {
+  const exportData = {
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    customProductMappings: loadCustomMappings(),
+    customCategories: loadCustomCategories()
+  };
+
+  const dataStr = JSON.stringify(exportData, null, 2);
+  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(dataBlob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `grocery-data-backup-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  alert(`✅ Data exported successfully!\n\nFile: ${link.download}\n\nThis includes:\n• ${Object.keys(exportData.customProductMappings).length} custom product mappings\n• ${exportData.customCategories.length} custom categories\n• All tags`);
+}
+
+// Import custom data from JSON file
+function importCustomData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const importData = JSON.parse(e.target.result);
+
+      // Validate the data structure
+      if (!importData.version || !importData.customProductMappings || !importData.customCategories) {
+        throw new Error('Invalid backup file format');
+      }
+
+      // Confirm before overwriting
+      const mappingsCount = Object.keys(importData.customProductMappings).length;
+      const categoriesCount = importData.customCategories.length;
+
+      if (!confirm(`Import data from backup?\n\nThis will import:\n• ${mappingsCount} product mappings\n• ${categoriesCount} custom categories\n• All associated tags\n\nYour current custom data will be merged with the imported data.`)) {
+        event.target.value = ''; // Reset file input
+        return;
+      }
+
+      // Merge custom mappings (imported data takes precedence)
+      const currentMappings = loadCustomMappings();
+      const mergedMappings = { ...currentMappings, ...importData.customProductMappings };
+      localStorage.setItem('customProductMappings', JSON.stringify(mergedMappings));
+
+      // Merge custom categories (avoid duplicates)
+      const currentCategories = loadCustomCategories();
+      const allCategories = [...new Set([...currentCategories, ...importData.customCategories])];
+      localStorage.setItem('customCategories', JSON.stringify(allCategories));
+
+      // Refresh the display
+      if (allReceipts.length > 0) {
+        renderAnalysis();
+      }
+      renderProductLibrary(document.getElementById('productSearch')?.value || '');
+
+      alert(`✅ Data imported successfully!\n\nImported:\n• ${mappingsCount} product mappings\n• ${categoriesCount} custom categories\n\nYour Product Library has been updated.`);
+
+    } catch (error) {
+      alert(`❌ Error importing data:\n\n${error.message}\n\nPlease make sure you're using a valid backup file.`);
+      console.error('Import error:', error);
+    }
+
+    // Reset file input
+    event.target.value = '';
+  };
+
+  reader.readAsText(file);
 }
 
 // Handle deleting a custom category
