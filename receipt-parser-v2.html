@@ -2133,6 +2133,80 @@ function saveCustomMappings(mappings) {
 }
 
 // Build product library from all receipts
+// Suggest a generic shopping list name from a product name
+function suggestShoppingListName(productName) {
+  if (!productName) return '';
+
+  const name = productName.toUpperCase().trim();
+
+  // Common patterns to extract generic names
+  const patterns = [
+    // Coffee
+    { regex: /KAFFE|COFFEE|ESPRESSO|BRYGG/i, name: 'Kaffe' },
+    // Milk
+    { regex: /MJÖLK|MILK|FILMJÖLK|LÄTTMJÖLK|MELLANMJÖLK|MINIMJÖLK/i, name: 'Mjölk' },
+    // Bread
+    { regex: /BRÖD|BREAD|LIMPA|FRALLOR|FRALLA|LEVAIN/i, name: 'Bröd' },
+    // Cheese
+    { regex: /OST|CHEESE|HUSHÅLLSOST|PRÄSTOST|VÄSTERBOTTEN/i, name: 'Ost' },
+    // Butter
+    { regex: /SMÖR|BUTTER|BREGOTT/i, name: 'Smör' },
+    // Eggs
+    { regex: /ÄGG|EGG/i, name: 'Ägg' },
+    // Yogurt
+    { regex: /YOGHURT|YOGURT|TURKISK|GREKISK/i, name: 'Yoghurt' },
+    // Juice
+    { regex: /JUICE|SAF/i, name: 'Juice' },
+    // Tomatoes
+    { regex: /TOMAT|TOMATO/i, name: 'Tomat' },
+    // Cucumber
+    { regex: /GURKA|CUCUMBER/i, name: 'Gurka' },
+    // Bananas
+    { regex: /BANAN|BANANA/i, name: 'Bananer' },
+    // Apples
+    { regex: /ÄPPL|APPLE/i, name: 'Äpple' },
+    // Onion
+    { regex: /LÖK|ONION|GULLÖK|RÖDLÖK/i, name: 'Lök' },
+    // Potatoes
+    { regex: /POTATIS|POTATO|POTAT/i, name: 'Potatis' },
+    // Pasta
+    { regex: /PASTA|MAKARONER|SPAGHETTI|PENNE/i, name: 'Pasta' },
+    // Rice
+    { regex: /RIS|RICE|JASMIN/i, name: 'Ris' },
+    // Chicken
+    { regex: /KYCKLING|CHICKEN/i, name: 'Kyckling' },
+    // Meat
+    { regex: /KÖTTFÄRS|FÄRS|GROUND/i, name: 'Köttfärs' },
+    // Ham
+    { regex: /SKINKA|HAM/i, name: 'Skinka' },
+    // Sausage
+    { regex: /KORV|SAUSAGE|FALUKORV/i, name: 'Korv' },
+    // Fish
+    { regex: /FISK|FISH|LAX|SALMON/i, name: 'Fisk' },
+    // Paper
+    { regex: /PAPPER|PAPER|HUSHÅLLSPAPPER/i, name: 'Papper' },
+    // Toilet paper
+    { regex: /TOALETTPAPPER|TOILET/i, name: 'Toalettpapper' }
+  ];
+
+  // Try to match against known patterns
+  for (const pattern of patterns) {
+    if (pattern.regex.test(name)) {
+      return pattern.name;
+    }
+  }
+
+  // If no pattern matches, extract first word and capitalize it properly
+  const words = name.split(/\s+/);
+  if (words.length > 0) {
+    const firstWord = words[0];
+    // Capitalize first letter, lowercase the rest
+    return firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
+  }
+
+  return productName;
+}
+
 function buildProductLibrary() {
   const productMap = new Map();
   const customMappings = loadCustomMappings();
@@ -2149,6 +2223,7 @@ function buildProductLibrary() {
         productMap.set(rawName, {
           rawName: rawName,
           standardName: standardName,
+          shoppingListName: customData?.shoppingListName || suggestShoppingListName(standardName),
           category: category,
           count: 0,
           totalSpent: 0,
@@ -2299,9 +2374,10 @@ function renderProductLibrary(searchFilter = '') {
       <table class="product-table">
         <thead>
           <tr>
-            <th style="width: 25%;">Original Name</th>
-            <th style="width: 30%;">Standardized Name</th>
-            <th style="width: 20%;">Category</th>
+            <th style="width: 20%;">Original Name</th>
+            <th style="width: 25%;">Standardized Name</th>
+            <th style="width: 15%;">Shopping List Name</th>
+            <th style="width: 15%;">Category</th>
             <th style="width: 15%;">Tags</th>
             <th style="width: 10%;">Purchases</th>
           </tr>
@@ -2325,6 +2401,17 @@ function renderProductLibrary(searchFilter = '') {
                   placeholder="Enter product name..."
                 />
                 ${p.isCustom ? '<span class="edit-indicator">✓ Custom</span>' : ''}
+              </td>
+              <td>
+                <input
+                  type="text"
+                  value="${p.shoppingListName || ''}"
+                  data-raw="${p.rawName}"
+                  data-field="shoppingListName"
+                  onchange="updateProductMapping(this)"
+                  placeholder="Generic name..."
+                  style="font-weight: 500; color: #667eea;"
+                />
               </td>
               <td>
                 <input
