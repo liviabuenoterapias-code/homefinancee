@@ -92,6 +92,7 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
     <button class="tab active" onclick="switchTab('parser')">📄 Parse Receipts</button>
     <button class="tab" onclick="switchTab('analysis')">📊 Analysis</button>
     <button class="tab" onclick="switchTab('products')">🏷️ Product Library</button>
+    <button class="tab" onclick="switchTab('shopping-list')">🛒 Shopping List</button>
   </div>
 
   <!-- Parser Tab -->
@@ -216,6 +217,60 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
     </div>
   </div>
   <!-- End Product Library Tab -->
+
+  <!-- Shopping List Tab -->
+  <div id="shopping-list-tab" class="tab-content">
+    <div style="margin-bottom: 20px;">
+      <h2>🛒 Smart Shopping List</h2>
+      <p style="color: #666; margin: 10px 0;">Upload this week's Willys promotional flyer (reklamblad) to get personalized shopping recommendations based on your purchase history!</p>
+    </div>
+
+    <!-- Upload Reklamblad -->
+    <div class="upload-box" onclick="document.getElementById('reklamInput').click()">
+      <div style="font-size: 48px; margin-bottom: 10px;">📰</div>
+      <h3>Upload Willys Reklamblad (Promotional Flyer)</h3>
+      <p style="color: #666; margin-top: 10px;">Upload the PDF of this week's deals</p>
+      <input type="file" id="reklamInput" accept=".pdf" style="display:none;">
+    </div>
+
+    <div id="reklamStatus"></div>
+
+    <!-- Shopping List Content -->
+    <div id="shopping-list-content" style="display: none;">
+      <!-- Summary Stats -->
+      <div class="stats" style="margin-top: 30px;">
+        <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
+          <div class="stat-value" id="matchedItems">0</div>
+          <div class="stat-label">Items You Buy On Sale</div>
+        </div>
+        <div class="stat-card" style="background: linear-gradient(135deg, #ffc107, #ff9800);">
+          <div class="stat-value" id="potentialSavings">0 kr</div>
+          <div class="stat-label">Potential Savings</div>
+        </div>
+        <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8, #138496);">
+          <div class="stat-value" id="totalPromos">0</div>
+          <div class="stat-label">Total Promotions</div>
+        </div>
+        <div class="stat-card" style="background: linear-gradient(135deg, #dc3545, #c82333);">
+          <div class="stat-value" id="urgentBuys">0</div>
+          <div class="stat-label">Buy Now!</div>
+        </div>
+      </div>
+
+      <!-- Smart Recommendations -->
+      <div style="margin-top: 30px;">
+        <h3 style="color: #764ba2; margin-bottom: 15px;">💡 Smart Recommendations</h3>
+        <div id="recommendations"></div>
+      </div>
+
+      <!-- All Promotions -->
+      <div style="margin-top: 30px;">
+        <h3 style="color: #764ba2; margin-bottom: 15px;">📋 All Promotions This Week</h3>
+        <div id="allPromotions"></div>
+      </div>
+    </div>
+  </div>
+  <!-- End Shopping List Tab -->
 
   <!-- Product Detail Modal -->
   <div id="modal-overlay" class="modal-overlay" onclick="closeModal()"></div>
@@ -2748,6 +2803,405 @@ function handleRenameTag(oldTag) {
     if (allReceipts.length > 0) {
       renderProductLibrary(document.getElementById('productSearch').value);
     }
+  }
+}
+
+// ===== SHOPPING LIST / REKLAMBLAD FUNCTIONALITY =====
+
+// Store current promotions
+let currentPromotions = [];
+
+// Event listener for reklamblad upload
+document.getElementById('reklamInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file || file.type !== 'application/pdf') {
+    showReklamMessage('Please upload a PDF file', 'error');
+    return;
+  }
+
+  showReklamMessage('Processing promotional flyer...', 'info');
+
+  try {
+    await processReklamblad(file);
+    document.getElementById('reklamInput').value = '';
+  } catch (error) {
+    console.error('Error processing reklamblad:', error);
+    showReklamMessage('Error processing flyer. Please try again.', 'error');
+  }
+});
+
+// Process reklamblad PDF
+async function processReklamblad(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+
+    let fullText = '';
+
+    // Extract text from all pages
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      fullText += pageText + '\n';
+    }
+
+    // Parse promotions from text
+    currentPromotions = parsePromotions(fullText);
+
+    if (currentPromotions.length === 0) {
+      showReklamMessage('No promotions found in this flyer. Make sure it\'s a Willys promotional flyer.', 'error');
+      return;
+    }
+
+    // Check if we have receipt data
+    if (allReceipts.length === 0) {
+      showReklamMessage(`Found ${currentPromotions.length} promotions! Upload some receipts first to get personalized recommendations.`, 'info');
+      displayPromotions(currentPromotions, []);
+      return;
+    }
+
+    // Compare with purchase history and display
+    const recommendations = generateRecommendations(currentPromotions);
+    displayPromotions(currentPromotions, recommendations);
+
+    showReklamMessage(`Found ${currentPromotions.length} promotions! ${recommendations.length} match your shopping habits.`, 'success');
+
+  } catch (error) {
+    console.error('Reklamblad processing error:', error);
+    throw error;
+  }
+}
+
+// Parse promotions from reklamblad text
+function parsePromotions(text) {
+  const promotions = [];
+  const lines = text.split('\n');
+
+  // Common promotion patterns in Willys flyers:
+  // 1. "PRODUCT NAME 19.90" (simple price)
+  // 2. "PRODUCT NAME 2 för 30" (multi-buy)
+  // 3. "PRODUCT NAME 89.90 /kg" (per kg)
+  // 4. "PRODUCT NAME 10:-" (with :-)
+
+  // Regex patterns for different promo formats
+  const patterns = [
+    // Pattern: "PRODUCT 2 för 30" or "PRODUCT 3 för 50"
+    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+(\d+)\s+för\s+([\d,]+)/gi,
+
+    // Pattern: "PRODUCT 19.90 /kg" or "PRODUCT 89,90 kr/kg"
+    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+([\d,\.]+)\s*(?:kr)?\/kg/gi,
+
+    // Pattern: "PRODUCT 10:-" or "PRODUCT 19:90"
+    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+([\d]+):[\-\d]+/gi,
+
+    // Pattern: "PRODUCT 19.90" or "PRODUCT 29,50"
+    /([A-ZÅÄÖ][A-ZÅÄÖA-Za-zåäö\s&\-\/]+?)\s+([\d,\.]+)\s*kr?/gi
+  ];
+
+  const seen = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.length < 3) continue;
+
+    // Try each pattern
+    for (const pattern of patterns) {
+      const matches = [...line.matchAll(pattern)];
+
+      for (const match of matches) {
+        const productName = match[1].trim().toUpperCase();
+        let price = match[2];
+        let priceText = match[0];
+
+        // Skip if too short or looks like junk
+        if (productName.length < 3) continue;
+        if (/^\d+$/.test(productName)) continue; // Skip pure numbers
+
+        // Skip duplicates
+        const key = productName.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        // Parse price
+        let numericPrice = parseFloat(price.replace(',', '.'));
+
+        // For "X för Y" deals, calculate per-item price
+        if (match[3]) {
+          const totalPrice = parseFloat(match[3].replace(',', '.'));
+          const quantity = parseInt(match[2]);
+          numericPrice = totalPrice / quantity;
+          priceText = `${quantity} för ${match[3]}`;
+        }
+
+        promotions.push({
+          name: productName,
+          price: numericPrice,
+          priceText: priceText,
+          rawMatch: match[0]
+        });
+      }
+    }
+  }
+
+  return promotions;
+}
+
+// Generate smart recommendations based on purchase history
+function generateRecommendations(promotions) {
+  const recommendations = [];
+
+  // Build purchase history map
+  const purchaseHistory = {};
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      const normalizedName = normalizeProductName(item.name);
+
+      if (!purchaseHistory[normalizedName]) {
+        purchaseHistory[normalizedName] = {
+          name: item.name,
+          purchases: [],
+          totalSpent: 0,
+          avgPrice: 0
+        };
+      }
+
+      purchaseHistory[normalizedName].purchases.push({
+        date: new Date(receipt.date),
+        price: item.price,
+        quantity: item.quantity || 1
+      });
+      purchaseHistory[normalizedName].totalSpent += item.price;
+    });
+  });
+
+  // Calculate averages and find matches
+  Object.values(purchaseHistory).forEach(product => {
+    if (product.purchases.length > 0) {
+      product.avgPrice = product.totalSpent / product.purchases.length;
+      product.lastPurchase = new Date(Math.max(...product.purchases.map(p => p.date)));
+      product.daysSinceLastPurchase = Math.floor((new Date() - product.lastPurchase) / (1000 * 60 * 60 * 24));
+
+      // Calculate purchase frequency (average days between purchases)
+      if (product.purchases.length >= 2) {
+        const sortedDates = product.purchases.map(p => p.date).sort((a, b) => a - b);
+        let totalDays = 0;
+        for (let i = 1; i < sortedDates.length; i++) {
+          totalDays += (sortedDates[i] - sortedDates[i-1]) / (1000 * 60 * 60 * 24);
+        }
+        product.avgDaysBetweenPurchases = totalDays / (sortedDates.length - 1);
+      } else {
+        product.avgDaysBetweenPurchases = 999; // Unknown frequency
+      }
+    }
+  });
+
+  // Match promotions with purchase history
+  promotions.forEach(promo => {
+    const normalizedPromo = normalizeProductName(promo.name);
+
+    // Find matches in purchase history
+    Object.keys(purchaseHistory).forEach(histKey => {
+      const similarity = calculateSimilarity(normalizedPromo, histKey);
+
+      // If similarity is high enough, it's a match
+      if (similarity > 0.6) {
+        const product = purchaseHistory[histKey];
+        const savings = product.avgPrice - promo.price;
+        const savingsPercent = (savings / product.avgPrice) * 100;
+
+        // Only recommend if there's actual savings
+        if (savings > 0.5) {
+          // Calculate urgency score
+          let urgency = 'low';
+          let urgencyScore = 0;
+
+          if (product.avgDaysBetweenPurchases < 999) {
+            const expectedNextPurchase = product.daysSinceLastPurchase / product.avgDaysBetweenPurchases;
+            if (expectedNextPurchase >= 0.8) {
+              urgency = 'high';
+              urgencyScore = 3;
+            } else if (expectedNextPurchase >= 0.5) {
+              urgency = 'medium';
+              urgencyScore = 2;
+            } else {
+              urgency = 'low';
+              urgencyScore = 1;
+            }
+          }
+
+          recommendations.push({
+            promotion: promo,
+            matchedProduct: product,
+            savings: savings,
+            savingsPercent: savingsPercent,
+            urgency: urgency,
+            urgencyScore: urgencyScore,
+            daysSinceLastPurchase: product.daysSinceLastPurchase,
+            avgDaysBetweenPurchases: product.avgDaysBetweenPurchases,
+            purchaseCount: product.purchases.length
+          });
+        }
+      }
+    });
+  });
+
+  // Sort by urgency and savings
+  recommendations.sort((a, b) => {
+    if (a.urgencyScore !== b.urgencyScore) {
+      return b.urgencyScore - a.urgencyScore;
+    }
+    return b.savings - a.savings;
+  });
+
+  return recommendations;
+}
+
+// Normalize product name for matching
+function normalizeProductName(name) {
+  return name
+    .toUpperCase()
+    .replace(/[ÅÄÖA]/g, match => {
+      const map = {'Å': 'A', 'Ä': 'A', 'Ö': 'O'};
+      return map[match] || match;
+    })
+    .replace(/\s+/g, ' ')
+    .replace(/[^\w\s]/g, '')
+    .trim();
+}
+
+// Calculate similarity between two strings (simple version)
+function calculateSimilarity(str1, str2) {
+  // Simple approach: check if one contains key words from the other
+  const words1 = str1.split(/\s+/).filter(w => w.length > 2);
+  const words2 = str2.split(/\s+/).filter(w => w.length > 2);
+
+  if (words1.length === 0 || words2.length === 0) return 0;
+
+  let matches = 0;
+  words1.forEach(w1 => {
+    if (words2.some(w2 => w2.includes(w1) || w1.includes(w2))) {
+      matches++;
+    }
+  });
+
+  return matches / Math.max(words1.length, words2.length);
+}
+
+// Display promotions and recommendations
+function displayPromotions(promotions, recommendations) {
+  // Show the content area
+  document.getElementById('shopping-list-content').style.display = 'block';
+
+  // Update stats
+  document.getElementById('matchedItems').textContent = recommendations.length;
+  document.getElementById('totalPromos').textContent = promotions.length;
+
+  const totalSavings = recommendations.reduce((sum, rec) => sum + rec.savings, 0);
+  document.getElementById('potentialSavings').textContent = totalSavings.toFixed(2) + ' kr';
+
+  const urgentBuys = recommendations.filter(r => r.urgency === 'high').length;
+  document.getElementById('urgentBuys').textContent = urgentBuys;
+
+  // Display recommendations
+  const recDiv = document.getElementById('recommendations');
+  if (recommendations.length === 0) {
+    recDiv.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No matching items found. These promotions don\'t match your usual purchases.</p>';
+  } else {
+    let html = '';
+
+    recommendations.forEach(rec => {
+      const urgencyColors = {
+        high: 'linear-gradient(135deg, #dc3545, #c82333)',
+        medium: 'linear-gradient(135deg, #ffc107, #ff9800)',
+        low: 'linear-gradient(135deg, #28a745, #20c997)'
+      };
+
+      const urgencyIcons = {
+        high: '🔥',
+        medium: '⏰',
+        low: '✅'
+      };
+
+      const urgencyLabels = {
+        high: 'BUY NOW!',
+        medium: 'Good Deal',
+        low: 'Nice Savings'
+      };
+
+      let frequencyText = '';
+      if (rec.avgDaysBetweenPurchases < 999) {
+        frequencyText = `You buy this every ${Math.round(rec.avgDaysBetweenPurchases)} days. Last bought ${rec.daysSinceLastPurchase} days ago.`;
+      } else {
+        frequencyText = `You've bought this ${rec.purchaseCount} time(s). Last purchased ${rec.daysSinceLastPurchase} days ago.`;
+      }
+
+      html += `
+        <div style="background: white; border-left: 5px solid #667eea; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <span style="font-size: 24px;">${urgencyIcons[rec.urgency]}</span>
+                <h4 style="margin: 0; color: #333; font-size: 18px;">${rec.promotion.name}</h4>
+                <span style="background: ${urgencyColors[rec.urgency]}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                  ${urgencyLabels[rec.urgency]}
+                </span>
+              </div>
+
+              <div style="color: #666; font-size: 14px; margin-bottom: 8px;">
+                ${frequencyText}
+              </div>
+
+              <div style="display: flex; gap: 20px; align-items: center;">
+                <div>
+                  <span style="color: #999; text-decoration: line-through;">Avg: ${rec.matchedProduct.avgPrice.toFixed(2)} kr</span>
+                  <span style="font-size: 20px; font-weight: bold; color: #28a745; margin-left: 10px;">
+                    ${rec.promotion.priceText}
+                  </span>
+                </div>
+                <div style="background: #d4edda; color: #155724; padding: 8px 15px; border-radius: 5px; font-weight: bold;">
+                  💰 Save ${rec.savings.toFixed(2)} kr (${rec.savingsPercent.toFixed(0)}%)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    recDiv.innerHTML = html;
+  }
+
+  // Display all promotions
+  const allPromoDiv = document.getElementById('allPromotions');
+  let promoHtml = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">';
+
+  promotions.forEach(promo => {
+    const isRecommended = recommendations.some(r => r.promotion === promo);
+
+    promoHtml += `
+      <div style="background: ${isRecommended ? '#f0f8ff' : 'white'}; padding: 15px; border-radius: 8px; border: 2px solid ${isRecommended ? '#667eea' : '#e0e0e0'};">
+        ${isRecommended ? '<div style="color: #667eea; font-weight: bold; margin-bottom: 5px;">⭐ You buy this!</div>' : ''}
+        <div style="font-weight: bold; color: #333; margin-bottom: 5px;">${promo.name}</div>
+        <div style="font-size: 18px; color: #28a745; font-weight: bold;">${promo.priceText}</div>
+      </div>
+    `;
+  });
+
+  promoHtml += '</div>';
+  allPromoDiv.innerHTML = promoHtml;
+}
+
+// Show message in reklamblad status area
+function showReklamMessage(message, type) {
+  const statusDiv = document.getElementById('reklamStatus');
+  statusDiv.innerHTML = `<div class="msg ${type}">${message}</div>`;
+
+  if (type === 'success' || type === 'error') {
+    setTimeout(() => {
+      statusDiv.innerHTML = '';
+    }, 5000);
   }
 }
 
