@@ -1711,6 +1711,57 @@ function removeProductTag(standardName, tag) {
   updateProductTags(standardName, filtered);
 }
 
+// Add tag from Product Library table
+function addProductTagFromLibrary(inputElement) {
+  const standardName = inputElement.getAttribute('data-product');
+  const newTag = inputElement.value.trim().toLowerCase();
+
+  if (!newTag) {
+    return;
+  }
+
+  const currentTags = getProductTags(standardName);
+  if (currentTags.includes(newTag)) {
+    alert('This tag already exists');
+    return;
+  }
+
+  currentTags.push(newTag);
+  updateProductTagsFromLibrary(standardName, currentTags);
+}
+
+// Remove tag from Product Library table
+function removeProductTagFromLibrary(standardName, tag) {
+  const currentTags = getProductTags(standardName);
+  const filtered = currentTags.filter(t => t !== tag);
+  updateProductTagsFromLibrary(standardName, filtered);
+}
+
+// Update tags and refresh Product Library instead of modal
+function updateProductTagsFromLibrary(standardName, tags) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    if (!customMappings[rawName]) {
+      customMappings[rawName] = {
+        standardName: product.standardName,
+        category: product.category,
+        tags: tags
+      };
+    } else {
+      customMappings[rawName].tags = tags;
+    }
+  });
+
+  // Save and refresh library
+  saveCustomMappings(customMappings);
+  renderProductLibrary(document.getElementById('productSearch').value);
+}
+
 // Show detailed products for a category
 function showCategoryDetails(categoryName) {
   const detailsDiv = document.getElementById('category-details');
@@ -1934,11 +1985,13 @@ function deleteCustomCategory(categoryName) {
 function renderProductLibrary(searchFilter = '') {
   const products = buildProductLibrary();
   const filteredProducts = searchFilter
-    ? products.filter(p =>
-        p.rawName.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        p.standardName.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        p.category.toLowerCase().includes(searchFilter.toLowerCase())
-      )
+    ? products.filter(p => {
+        const tags = getProductTags(p.standardName);
+        return p.rawName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+               p.standardName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+               p.category.toLowerCase().includes(searchFilter.toLowerCase()) ||
+               tags.some(tag => tag.includes(searchFilter.toLowerCase()));
+      })
     : products;
 
   const categories = getAllCategories();
@@ -1968,14 +2021,18 @@ function renderProductLibrary(searchFilter = '') {
       <table class="product-table">
         <thead>
           <tr>
-            <th style="width: 30%;">Original Name</th>
-            <th style="width: 35%;">Standardized Name</th>
-            <th style="width: 25%;">Category</th>
+            <th style="width: 25%;">Original Name</th>
+            <th style="width: 30%;">Standardized Name</th>
+            <th style="width: 20%;">Category</th>
+            <th style="width: 15%;">Tags</th>
             <th style="width: 10%;">Purchases</th>
           </tr>
         </thead>
         <tbody>
-          ${filteredProducts.map(p => `
+          ${filteredProducts.map(p => {
+            const productTags = getProductTags(p.standardName);
+            const allExistingTags = getAllTags();
+            return `
             <tr>
               <td>
                 <div style="font-family: monospace; color: #555;">${p.rawName}</div>
@@ -2009,11 +2066,32 @@ function renderProductLibrary(searchFilter = '') {
                 </datalist>
               </td>
               <td>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px;">
+                  ${productTags.length > 0 ? productTags.map(tag => `
+                    <span style="background: #667eea; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+                      ${tag}
+                      <span onclick="removeProductTagFromLibrary('${p.standardName.replace(/'/g, "\\'")}', '${tag}')" style="cursor: pointer; font-weight: bold;">&times;</span>
+                    </span>
+                  `).join('') : '<span style="font-size: 11px; color: #999;">—</span>'}
+                </div>
+                <input
+                  type="text"
+                  list="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  placeholder="Add tag..."
+                  data-product="${p.standardName}"
+                  onkeypress="if(event.key === 'Enter') { addProductTagFromLibrary(this); this.value = ''; }"
+                  style="font-size: 12px; padding: 4px 6px;"
+                />
+                <datalist id="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
+                  ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+                </datalist>
+              </td>
+              <td>
                 <span class="product-count">${p.count}</span>
                 <div style="font-size: 11px; color: #999; margin-top: 4px;">${p.totalSpent.toFixed(0)} kr</div>
               </td>
             </tr>
-          `).join('')}
+          `}).join('')}
         </tbody>
       </table>
     </div>
