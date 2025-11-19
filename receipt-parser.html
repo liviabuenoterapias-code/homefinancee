@@ -1435,6 +1435,9 @@ function showProductDetail(productName) {
   // Get current tags for this product
   const currentTags = getProductTags(productName);
 
+  // Get all existing tags for autocomplete suggestions
+  const allExistingTags = getAllTags();
+
   document.getElementById('modal-content').innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
     <h2>${productName}</h2>
@@ -1465,9 +1468,13 @@ function showProductDetail(productName) {
         <input
           type="text"
           id="new-tag-input"
+          list="existing-tags-list"
           placeholder="Add tag (e.g., coffee, hot beverage)"
           onkeypress="if(event.key === 'Enter') addProductTag('${productName.replace(/'/g, "\\'")}')"
           style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px;">
+        <datalist id="existing-tags-list">
+          ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+        </datalist>
         <button
           onclick="addProductTag('${productName.replace(/'/g, "\\'")}')"
           class="btn"
@@ -1475,6 +1482,11 @@ function showProductDetail(productName) {
           Add
         </button>
       </div>
+      ${allExistingTags.length > 0 ? `
+        <div style="margin-top: 8px; font-size: 11px; color: #666;">
+          💡 Existing tags: ${allExistingTags.join(', ')}
+        </div>
+      ` : ''}
     </div>
 
     ${isWeightBased ? `
