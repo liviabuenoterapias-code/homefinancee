@@ -3167,6 +3167,18 @@ function scanProductQuality(products) {
     if (tooSpecific && !isSuggestionIgnored(product.rawName, tooSpecific.type)) {
       suggestions.push(tooSpecific);
     }
+
+    // Issue 8: Product name capitalization inconsistency
+    const capitalizationIssue = detectCapitalizationIssues(product);
+    if (capitalizationIssue && !isSuggestionIgnored(product.rawName, capitalizationIssue.type)) {
+      suggestions.push(capitalizationIssue);
+    }
+
+    // Issue 9: Brand capitalization inconsistency
+    const brandCapIssue = detectBrandCapitalizationIssues(product);
+    if (brandCapIssue && !isSuggestionIgnored(product.rawName, brandCapIssue.type)) {
+      suggestions.push(brandCapIssue);
+    }
   });
 
   // Sort by confidence (High -> Medium -> Low)
@@ -3494,6 +3506,71 @@ function detectOverlySpecificProductName(product) {
         confidence: 'low'
       };
     }
+  }
+
+  return null;
+}
+
+// Detect capitalization inconsistencies (e.g., "Prästost" vs "prästost" vs "Präst")
+function detectCapitalizationIssues(product) {
+  if (!product.productName) return null;
+
+  const name = product.productName;
+  const lower = name.toLowerCase();
+
+  // Check if product name has uppercase letters (should be lowercase for consistency)
+  const hasUpperCase = /[A-ZÅÄÖ]/.test(name);
+
+  if (hasUpperCase) {
+    return {
+      type: 'capitalization',
+      rawName: product.rawName,
+      current: { productName: product.productName },
+      suggested: { productName: lower },
+      reason: 'Product names should be lowercase for consistency (easier to search and group). Brands are stored separately.',
+      confidence: 'medium'
+    };
+  }
+
+  return null;
+}
+
+// Detect brand capitalization inconsistencies
+function detectBrandCapitalizationIssues(product) {
+  if (!product.brand || product.brand.length === 0) return null;
+
+  const brand = product.brand;
+
+  // Check if brand is all lowercase (brands should be uppercase/titlecase)
+  const isAllLowercase = brand === brand.toLowerCase();
+
+  if (isAllLowercase) {
+    const upperBrand = brand.toUpperCase();
+    return {
+      type: 'brand_capitalization',
+      rawName: product.rawName,
+      current: { brand: product.brand },
+      suggested: { brand: upperBrand },
+      reason: 'Brand names should be uppercase for consistency (e.g., "ARLA", "VALIO", "ZETA").',
+      confidence: 'medium'
+    };
+  }
+
+  // Check for mixed case that isn't title case (e.g., "PrEstOst" or "aRLA")
+  const hasMixedCase = brand !== brand.toUpperCase() &&
+                       brand !== brand.toLowerCase() &&
+                       brand !== brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
+
+  if (hasMixedCase) {
+    const upperBrand = brand.toUpperCase();
+    return {
+      type: 'brand_capitalization',
+      rawName: product.rawName,
+      current: { brand: product.brand },
+      suggested: { brand: upperBrand },
+      reason: 'Brand has inconsistent capitalization. Standardize to uppercase for consistency.',
+      confidence: 'high'
+    };
   }
 
   return null;
