@@ -2189,7 +2189,8 @@ const SWEDISH_BRANDS = {
   bread: ['PÅGEN', 'POLARBRÖD', 'BONJOUR', 'SKOGAHOLM', 'SCHULSTAD'],
   store: ['ICA', 'COOP', 'GARANT', 'ELDORADO', 'FIRST PRICE', 'WILLYS'],
   snacks: ['ESTRELLA', 'OLW', 'MARABOU', 'CLOETTA', 'FAZER'],
-  household: ['YES', 'ZALo', 'AJAX', 'CIF', 'MR MUSCLE'],
+  household: ['YES', 'ZALO', 'AJAX', 'CIF', 'MR MUSCLE'],
+  personalCare: ['GLISS', 'DOVE', 'NIVEA', 'GARNIER', 'HEAD & SHOULDERS', 'PANTENE', 'LOREAL', "L'OREAL", 'TRESEMME'],
   oil: ['ZETA', 'BORGES', 'MONINI', 'CARLSHAMN'],
   pasta: ['BARILLA', 'GAROFALO', 'DE CECCO'],
   frozen: ['FINDUS', 'FELIX', 'VIKING']
@@ -3019,17 +3020,53 @@ function detectWrongCategory(product) {
   if (!product.productName || !product.productType) return null;
 
   const lowerName = product.productName.toLowerCase();
+  const lowerRaw = product.rawName.toLowerCase();
+  const brand = product.brand ? product.brand.toUpperCase() : '';
 
-  // Oil products should be Pantry, not Personal Care
+  // Check if it's hair/beauty oil (NOT cooking oil)
+  const isHairBeautyOil =
+    lowerName.includes('hair') || lowerName.includes('hår') ||
+    lowerName.includes('elixir') || lowerName.includes('serum') ||
+    lowerName.includes('beauty') || lowerName.includes('skönhet') ||
+    lowerRaw.includes('hair') || lowerRaw.includes('hår') ||
+    (SWEDISH_BRANDS.personalCare && SWEDISH_BRANDS.personalCare.includes(brand));
+
+  // Check if it's cooking oil
+  const isCookingOil =
+    SWEDISH_BRANDS.oil && SWEDISH_BRANDS.oil.includes(brand) ||
+    lowerName.includes('rapsolja') || lowerName.includes('olivolja') ||
+    lowerName.includes('rapeseed') || lowerName.includes('olive oil') ||
+    lowerName.includes('canola') || lowerName.includes('vegetable oil');
+
+  // Oil products: cooking oils should be Pantry, hair/beauty oils should stay in Personal Care
   if ((lowerName.includes('olja') || lowerName.includes('oil')) &&
       product.productType === 'Personal Care') {
+
+    // If it's clearly a hair/beauty product, Personal Care is CORRECT - no suggestion
+    if (isHairBeautyOil) {
+      return null;
+    }
+
+    // If it's clearly cooking oil, suggest Pantry
+    if (isCookingOil) {
+      return {
+        type: 'wrong_category',
+        rawName: product.rawName,
+        current: { productType: product.productType },
+        suggested: { productType: 'Pantry - Sauces' },
+        reason: 'Cooking oils should be categorized as Pantry, not Personal Care',
+        confidence: 'high'
+      };
+    }
+
+    // If unclear, suggest with LOW confidence
     return {
       type: 'wrong_category',
       rawName: product.rawName,
       current: { productType: product.productType },
       suggested: { productType: 'Pantry - Sauces' },
-      reason: 'Cooking oils should be categorized as Pantry, not Personal Care',
-      confidence: 'high'
+      reason: 'Oil product - might be cooking oil? (Check if it\'s hair/beauty oil)',
+      confidence: 'low'
     };
   }
 
