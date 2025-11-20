@@ -204,6 +204,20 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
         </div>
       </div>
 
+      <!-- Quality Check Agent -->
+      <div style="background: #e7f3ff; border: 1px solid #2196F3; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <strong>🤖 Quality Check:</strong>
+          <button onclick="runQualityCheck()" class="btn" style="padding: 8px 20px; background: #2196F3; color: white;">
+            🔍 Scan Products
+          </button>
+          <span id="quality-check-status" style="font-size: 13px; color: #666;"></span>
+        </div>
+        <div style="font-size: 12px; color: #0066cc;">
+          💡 Scans all products for missing brands, wrong categories, inconsistent naming, etc. Review and apply suggestions manually.
+        </div>
+      </div>
+
       <div style="margin-top: 15px;">
         <input type="text" id="productSearch" placeholder="🔍 Search products..." style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
       </div>
@@ -2797,6 +2811,531 @@ function importCustomData(event) {
   };
 
   reader.readAsText(file);
+}
+
+// ========================================
+// QUALITY CHECK AGENT
+// ========================================
+
+// Store suggestions globally for access by action functions
+let currentQualitySuggestions = [];
+
+// Main scanner function
+function scanProductQuality(products) {
+  const suggestions = [];
+  const productNameCounts = {};
+
+  // Count similar product names for inconsistency detection
+  products.forEach(p => {
+    const normalized = p.productName?.toLowerCase().trim();
+    if (normalized) {
+      productNameCounts[normalized] = (productNameCounts[normalized] || 0) + 1;
+    }
+  });
+
+  products.forEach(product => {
+    // Issue 1: Missing brand (brand exists in raw name but not extracted)
+    const missingBrand = detectMissingBrand(product);
+    if (missingBrand) suggestions.push(missingBrand);
+
+    // Issue 2: Brand still in product name
+    const brandInName = detectBrandInProductName(product);
+    if (brandInName) suggestions.push(brandInName);
+
+    // Issue 3: Size/weight still in product name
+    const sizeInName = detectSizeInProductName(product);
+    if (sizeInName) suggestions.push(sizeInName);
+
+    // Issue 4: Wrong product type (category)
+    const wrongCategory = detectWrongCategory(product);
+    if (wrongCategory) suggestions.push(wrongCategory);
+
+    // Issue 5: Store section mismatch
+    const sectionMismatch = detectStoreSectionMismatch(product);
+    if (sectionMismatch) suggestions.push(sectionMismatch);
+
+    // Issue 6: Product name too similar to raw name (not cleaned enough)
+    const notCleaned = detectNotCleanedEnough(product);
+    if (notCleaned) suggestions.push(notCleaned);
+  });
+
+  // Sort by confidence (High -> Medium -> Low)
+  suggestions.sort((a, b) => {
+    const order = { high: 0, medium: 1, low: 2 };
+    return order[a.confidence] - order[b.confidence];
+  });
+
+  return suggestions;
+}
+
+// Detect missing brand
+function detectMissingBrand(product) {
+  if (product.brand) return null; // Already has brand
+
+  const upperRaw = product.rawName.toUpperCase();
+  for (const brand of ALL_BRANDS) {
+    const regex = new RegExp(`\\b${brand}\\b`, 'i');
+    if (regex.test(upperRaw)) {
+      return {
+        type: 'missing_brand',
+        rawName: product.rawName,
+        current: { brand: product.brand || '(none)' },
+        suggested: { brand: brand },
+        reason: `Found "${brand}" in receipt name but brand field is empty`,
+        confidence: 'high'
+      };
+    }
+  }
+  return null;
+}
+
+// Detect brand still in product name
+function detectBrandInProductName(product) {
+  if (!product.brand || !product.productName) return null;
+
+  const regex = new RegExp(`\\b${product.brand}\\b`, 'i');
+  if (regex.test(product.productName)) {
+    const cleaned = product.productName.replace(regex, '').replace(/\s+/g, ' ').trim();
+    if (cleaned && cleaned !== product.productName) {
+      return {
+        type: 'brand_in_name',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: cleaned },
+        reason: `Product name contains brand "${product.brand}" - should be removed for generic naming`,
+        confidence: 'high'
+      };
+    }
+  }
+  return null;
+}
+
+// Detect size/weight in product name
+function detectSizeInProductName(product) {
+  if (!product.productName) return null;
+
+  const sizePatterns = [
+    /\d+\s*[gG]\b/,           // 500G, 1g
+    /\d+\s*[kK][gG]\b/,       // 1KG, 2kg
+    /\d+\s*[mM][lL]\b/,       // 500ML, 1ml
+    /\d+\s*[lL]\b/,           // 1L, 2l
+    /\d+\s*[sS][tT]\b/,       // 12ST, 20st
+    /\d+\s*[pP]\b/,           // 6P, 12p
+    /\d+\s*[pP][aA][cC][kK]/, // 20-PACK
+    /\d+[,\.]\d+%/            // 1.5%, 3%
+  ];
+
+  for (const pattern of sizePatterns) {
+    if (pattern.test(product.productName)) {
+      const cleaned = product.productName
+        .replace(/\d+\s*[gG]\b/g, '')
+        .replace(/\d+\s*[kK][gG]\b/g, '')
+        .replace(/\d+\s*[mM][lL]\b/g, '')
+        .replace(/\d+\s*[lL]\b/g, '')
+        .replace(/\d+\s*[sS][tT]\b/g, '')
+        .replace(/\d+\s*[pP]\b/g, '')
+        .replace(/\d+\s*[pP][aA][cC][kK]/gi, '')
+        .replace(/\d+[,\.]\d+%/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (cleaned && cleaned !== product.productName) {
+        return {
+          type: 'size_in_name',
+          rawName: product.rawName,
+          current: { productName: product.productName },
+          suggested: { productName: cleaned },
+          reason: 'Product name contains size/weight - should be generic',
+          confidence: 'medium'
+        };
+      }
+    }
+  }
+  return null;
+}
+
+// Detect wrong category (e.g., cooking oil as Personal Care)
+function detectWrongCategory(product) {
+  if (!product.productName || !product.productType) return null;
+
+  const lowerName = product.productName.toLowerCase();
+
+  // Oil products should be Pantry, not Personal Care
+  if ((lowerName.includes('olja') || lowerName.includes('oil')) &&
+      product.productType === 'Personal Care') {
+    return {
+      type: 'wrong_category',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: 'Pantry - Sauces' },
+      reason: 'Cooking oils should be categorized as Pantry, not Personal Care',
+      confidence: 'high'
+    };
+  }
+
+  // Vitamins/supplements are Personal Care, not Food
+  if ((lowerName.includes('vitamin') || lowerName.includes('supplement')) &&
+      product.productType.includes('Pantry')) {
+    return {
+      type: 'wrong_category',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: 'Personal Care' },
+      reason: 'Vitamins/supplements should be Personal Care',
+      confidence: 'medium'
+    };
+  }
+
+  // More detection rules can be added here
+  return null;
+}
+
+// Detect store section mismatch
+function detectStoreSectionMismatch(product) {
+  if (!product.productType || !product.storeSection) return null;
+
+  const expectedSection = mapProductTypeToStoreSection(product.productType);
+  if (expectedSection !== product.storeSection) {
+    const expectedName = STORE_CATEGORIES.find(c => c.id === expectedSection)?.name || expectedSection;
+    const currentName = STORE_CATEGORIES.find(c => c.id === product.storeSection)?.name || product.storeSection;
+
+    return {
+      type: 'section_mismatch',
+      rawName: product.rawName,
+      current: { storeSection: product.storeSection },
+      suggested: { storeSection: expectedSection },
+      reason: `Product Type "${product.productType}" usually maps to "${expectedName}", but it's in "${currentName}"`,
+      confidence: 'low'
+    };
+  }
+  return null;
+}
+
+// Detect product name not cleaned enough (too similar to raw)
+function detectNotCleanedEnough(product) {
+  if (!product.productName || !product.rawName) return null;
+
+  // Skip if custom mapping exists (user intentionally set it)
+  const customMappings = loadCustomMappings();
+  if (customMappings[product.rawName]?.productName) return null;
+
+  const similarity = stringSimilarity(
+    product.productName.toLowerCase(),
+    product.rawName.toLowerCase()
+  );
+
+  // If 80%+ similar, product name might need more cleaning
+  if (similarity > 0.8 && product.rawName.length > 10) {
+    const betterName = suggestShoppingListName(
+      cleanProductName(product.rawName, product.brand)
+    );
+
+    if (betterName && betterName !== product.productName) {
+      return {
+        type: 'not_cleaned',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: betterName },
+        reason: 'Product name is too similar to receipt name - could be more generic',
+        confidence: 'low'
+      };
+    }
+  }
+  return null;
+}
+
+// Calculate string similarity (0-1)
+function stringSimilarity(str1, str2) {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  if (longer.length === 0) return 1.0;
+
+  const editDistance = levenshteinDistance(longer, shorter);
+  return (longer.length - editDistance) / longer.length;
+}
+
+// Levenshtein distance
+function levenshteinDistance(str1, str2) {
+  const matrix = [];
+
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[str2.length][str1.length];
+}
+
+// Show quality check modal with suggestions
+function showQualityCheckModal(suggestions) {
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  const highCount = suggestions.filter(s => s.confidence === 'high').length;
+  const mediumCount = suggestions.filter(s => s.confidence === 'medium').length;
+  const lowCount = suggestions.filter(s => s.confidence === 'low').length;
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🤖 Quality Check Results</h2>
+
+    <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+      <strong>Found ${suggestions.length} suggestions:</strong>
+      <div style="margin-top: 10px; display: flex; gap: 15px;">
+        <span style="color: #d32f2f;">● High: ${highCount}</span>
+        <span style="color: #f57c00;">● Medium: ${mediumCount}</span>
+        <span style="color: #1976d2;">● Low: ${lowCount}</span>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+      <button onclick="applyAllHighConfidence()" class="btn" style="background: #d32f2f; color: white;">
+        ⚡ Apply All High Confidence (${highCount})
+      </button>
+      <button onclick="closeModal()" class="btn" style="background: #6c757d;">
+        Done
+      </button>
+    </div>
+
+    <div style="max-height: 60vh; overflow-y: auto;">
+      ${suggestions.map((sug, index) => renderSuggestion(sug, index)).join('')}
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Render a single suggestion
+function renderSuggestion(sug, index) {
+  const confidenceColors = {
+    high: { bg: '#ffebee', border: '#d32f2f', text: '#d32f2f' },
+    medium: { bg: '#fff3e0', border: '#f57c00', text: '#f57c00' },
+    low: { bg: '#e3f2fd', border: '#1976d2', text: '#1976d2' }
+  };
+
+  const colors = confidenceColors[sug.confidence];
+
+  // Build current vs suggested display
+  const fields = Object.keys(sug.suggested);
+  const changesHtml = fields.map(field => {
+    const currentVal = sug.current[field] || '(empty)';
+    const suggestedVal = sug.suggested[field];
+
+    return `
+      <div style="margin: 8px 0;">
+        <strong>${field}:</strong>
+        <div style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+          <span style="flex: 1; padding: 6px; background: #f5f5f5; border-radius: 4px; font-family: monospace; font-size: 13px;">
+            ${currentVal}
+          </span>
+          <span style="color: #666;">→</span>
+          <span style="flex: 1; padding: 6px; background: #e8f5e9; border-radius: 4px; font-family: monospace; font-size: 13px; font-weight: 500;">
+            ${suggestedVal}
+          </span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div id="suggestion-${index}" style="background: ${colors.bg}; border-left: 4px solid ${colors.border}; padding: 15px; margin-bottom: 15px; border-radius: 4px;">
+      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+        <div style="flex: 1;">
+          <div style="font-weight: bold; font-size: 14px; color: ${colors.text}; text-transform: uppercase; margin-bottom: 5px;">
+            ${sug.confidence} CONFIDENCE
+          </div>
+          <div style="font-family: monospace; font-size: 12px; color: #666; margin-bottom: 8px;">
+            Receipt: ${sug.rawName}
+          </div>
+          <div style="font-size: 13px; color: #555; font-style: italic;">
+            ${sug.reason}
+          </div>
+        </div>
+      </div>
+
+      ${changesHtml}
+
+      <div style="display: flex; gap: 8px; margin-top: 12px;">
+        <button onclick="applySuggestion(${index})" class="btn" style="background: #28a745; color: white; padding: 6px 16px; font-size: 13px;">
+          ✓ Apply
+        </button>
+        <button onclick="ignoreSuggestion(${index})" class="btn" style="background: #6c757d; color: white; padding: 6px 16px; font-size: 13px;">
+          ✗ Ignore
+        </button>
+        <button onclick="editSuggestion('${sug.rawName.replace(/'/g, "\\'")}', ${index})" class="btn" style="background: #ffc107; color: #000; padding: 6px 16px; font-size: 13px;">
+          ✏️ Edit
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// Run quality check on all products
+function runQualityCheck() {
+  const products = buildProductLibrary();
+
+  if (products.length === 0) {
+    showMessage('No products to check. Upload receipts first!', 'info');
+    return;
+  }
+
+  document.getElementById('quality-check-status').textContent = '⏳ Scanning...';
+
+  setTimeout(() => {
+    const suggestions = scanProductQuality(products);
+    currentQualitySuggestions = suggestions;  // Store globally
+
+    document.getElementById('quality-check-status').textContent =
+      suggestions.length > 0 ? `Found ${suggestions.length} suggestions` : '✅ All good!';
+
+    if (suggestions.length > 0) {
+      showQualityCheckModal(suggestions);
+    } else {
+      alert('✅ Quality Check Complete!\n\nNo issues found. Your product library looks good!');
+    }
+  }, 100);
+}
+
+// Apply a single suggestion
+function applySuggestion(index) {
+  if (!currentQualitySuggestions[index]) return;
+
+  const sug = currentQualitySuggestions[index];
+  const customMappings = loadCustomMappings();
+
+  if (!customMappings[sug.rawName]) {
+    customMappings[sug.rawName] = {};
+  }
+
+  // Apply all suggested fields
+  Object.keys(sug.suggested).forEach(field => {
+    customMappings[sug.rawName][field] = sug.suggested[field];
+  });
+
+  saveCustomMappings(customMappings);
+
+  // Remove from list and update UI
+  const element = document.getElementById(`suggestion-${index}`);
+  if (element) {
+    element.style.opacity = '0.5';
+    element.innerHTML = '<div style="padding: 20px; text-align: center; color: #28a745;">✓ Applied</div>';
+    setTimeout(() => {
+      element.remove();
+
+      // Check if all suggestions handled
+      const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+      if (remaining === 0) {
+        closeModal();
+        renderProductLibrary(document.getElementById('productSearch')?.value || '');
+        showMessage('All suggestions applied!', 'success');
+      }
+    }, 500);
+  }
+
+  // Refresh product library
+  renderProductLibrary(document.getElementById('productSearch')?.value || '');
+}
+
+// Ignore a suggestion
+function ignoreSuggestion(index) {
+  const element = document.getElementById(`suggestion-${index}`);
+  if (element) {
+    element.style.opacity = '0.3';
+    element.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">✗ Ignored</div>';
+    setTimeout(() => {
+      element.remove();
+
+      const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+      if (remaining === 0) {
+        closeModal();
+        showMessage('Quality check complete', 'info');
+      }
+    }, 500);
+  }
+}
+
+// Edit suggestion manually
+function editSuggestion(rawName, index) {
+  closeModal();
+
+  // Search for the product in the library
+  const searchInput = document.getElementById('productSearch');
+  if (searchInput) {
+    searchInput.value = rawName;
+    renderProductLibrary(rawName);
+    searchInput.focus();
+    showMessage(`Showing product: ${rawName}. Edit it in the table below.`, 'info');
+  }
+}
+
+// Apply all high confidence suggestions
+function applyAllHighConfidence() {
+  if (!confirm('Apply all high confidence suggestions?\n\nThis will update multiple products at once.')) {
+    return;
+  }
+
+  let appliedCount = 0;
+  const customMappings = loadCustomMappings();
+
+  currentQualitySuggestions.forEach((sug, index) => {
+    if (sug.confidence === 'high') {
+      if (!customMappings[sug.rawName]) {
+        customMappings[sug.rawName] = {};
+      }
+
+      Object.keys(sug.suggested).forEach(field => {
+        customMappings[sug.rawName][field] = sug.suggested[field];
+      });
+
+      appliedCount++;
+
+      // Update UI
+      const element = document.getElementById(`suggestion-${index}`);
+      if (element) {
+        element.style.opacity = '0.3';
+        element.innerHTML = '<div style="padding: 20px; text-align: center; color: #28a745;">✓ Applied</div>';
+      }
+    }
+  });
+
+  saveCustomMappings(customMappings);
+  renderProductLibrary(document.getElementById('productSearch')?.value || '');
+
+  setTimeout(() => {
+    // Remove applied suggestions
+    document.querySelectorAll('[id^="suggestion-"]').forEach(el => {
+      if (el.style.opacity === '0.3') {
+        el.remove();
+      }
+    });
+
+    const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+    if (remaining === 0) {
+      closeModal();
+    }
+
+    showMessage(`Applied ${appliedCount} high confidence suggestions`, 'success');
+  }, 1000);
 }
 
 // Handle deleting a custom category
