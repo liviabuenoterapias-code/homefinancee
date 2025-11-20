@@ -247,6 +247,9 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
       <button class="btn" onclick="generateSuggestions()" style="background: linear-gradient(135deg, #28a745, #20c997);">
         💡 Generate Suggestions
       </button>
+      <button class="btn" onclick="clearAllSuggestions()" style="background: #f57c00;">
+        🗑️ Clear Suggestions
+      </button>
       <button class="btn" onclick="clearCheckedItems()">
         ✓ Clear Checked
       </button>
@@ -5140,6 +5143,27 @@ function clearCheckedItems() {
   saveShoppingList(unchecked);
   renderShoppingList();
   showMessage('Checked items cleared', 'success');
+}
+
+// Clear all suggested items (keeps manually added items)
+function clearAllSuggestions() {
+  const list = loadShoppingList();
+  const manualItems = list.filter(i => !i.isRecurrent);
+  const suggestedCount = list.filter(i => i.isRecurrent).length;
+
+  if (suggestedCount === 0) {
+    showMessage('No suggested items to clear', 'info');
+    return;
+  }
+
+  if (!confirm(`Remove all ${suggestedCount} suggested item(s)?\n\nManually added items will remain.`)) return;
+
+  saveShoppingList(manualItems);
+  renderShoppingList();
+  showMessage(`${suggestedCount} suggested items cleared`, 'success');
+
+  // Also hide the suggestions section
+  document.getElementById('suggestions-section').style.display = 'none';
 }
 
 // Add manual item
