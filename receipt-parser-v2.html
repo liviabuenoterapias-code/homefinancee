@@ -2117,6 +2117,58 @@ function loadCustomMappings() {
   return saved ? JSON.parse(saved) : {};
 }
 
+// Migrate old data structure to new structure
+function migrateOldDataStructure() {
+  const mappings = loadCustomMappings();
+  let migrated = false;
+
+  Object.keys(mappings).forEach(rawName => {
+    const mapping = mappings[rawName];
+
+    // Check if this is old format (has standardName or category but not productName)
+    if ((mapping.standardName || mapping.category || mapping.shoppingListName) && !mapping.productName) {
+      console.log(`Migrating: ${rawName}`);
+
+      // Extract brand if not present
+      if (!mapping.brand) {
+        mapping.brand = extractBrand(rawName);
+      }
+
+      // Convert shoppingListName or standardName to productName
+      if (!mapping.productName) {
+        if (mapping.shoppingListName) {
+          mapping.productName = mapping.shoppingListName;
+        } else if (mapping.standardName) {
+          mapping.productName = mapping.standardName;
+        } else {
+          const cleaned = cleanProductName(rawName, mapping.brand);
+          mapping.productName = suggestShoppingListName(cleaned);
+        }
+      }
+
+      // Convert category to productType
+      if (!mapping.productType && mapping.category) {
+        mapping.productType = mapping.category;
+      }
+
+      // Set storeSection if not present
+      if (!mapping.storeSection && mapping.productType) {
+        mapping.storeSection = mapProductTypeToStoreSection(mapping.productType);
+      }
+
+      migrated = true;
+    }
+  });
+
+  if (migrated) {
+    console.log('Data migration complete - saving...');
+    saveCustomMappings(mappings);
+    return true;
+  }
+
+  return false;
+}
+
 // Save custom product mappings to localStorage
 function saveCustomMappings(mappings) {
   localStorage.setItem('customProductMappings_v2', JSON.stringify(mappings));
@@ -2640,6 +2692,14 @@ function updateProductMapping(element) {
 
 // Add search handler
 document.addEventListener('DOMContentLoaded', () => {
+  // Run data migration on page load
+  console.log('Checking for old data structure...');
+  const wasMigrated = migrateOldDataStructure();
+  if (wasMigrated) {
+    console.log('✅ Data migrated successfully!');
+    showMessage('Data structure updated! Refresh the page to see changes.', 'success');
+  }
+
   const searchInput = document.getElementById('productSearch');
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
