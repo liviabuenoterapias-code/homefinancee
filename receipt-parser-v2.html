@@ -167,16 +167,16 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
       <h2>🏷️ Product Library</h2>
       <p style="color: #666; margin: 10px 0;">Review and edit how products are named and categorized. Your custom mappings will be saved and used in analysis.</p>
 
-      <!-- Category Management -->
+      <!-- Product Type Management -->
       <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-          <strong>📁 Categories:</strong>
-          <input type="text" id="newCategoryInput" placeholder="New category name..." style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-          <button onclick="handleAddCategory()" class="btn" style="padding: 8px 20px; background: #28a745;">+ Add Category</button>
-          <button onclick="showCategoryManager()" class="btn" style="padding: 8px 20px;">Manage Categories</button>
+          <strong>📁 Product Types:</strong>
+          <input type="text" id="newCategoryInput" placeholder="New product type name..." style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <button onclick="handleAddCategory()" class="btn" style="padding: 8px 20px; background: #28a745;">+ Add Type</button>
+          <button onclick="showCategoryManager()" class="btn" style="padding: 8px 20px;">Manage Types</button>
         </div>
         <div id="categoryHint" style="font-size: 12px; color: #666;">
-          Type a new category name and click Add. You can then assign products to your custom categories.
+          Type a new product type name and click Add. You can then assign products to your custom types.
         </div>
       </div>
 
@@ -2547,12 +2547,43 @@ function getAllCategories() {
     'Other'
   ];
 
+  // Load deleted and renamed categories
+  const deletedCategories = loadDeletedCategories();
+  const renamedCategories = loadRenamedCategories();
+
+  // Apply renames and filter deletions to default categories
+  const processedDefaults = defaultCategories
+    .filter(cat => !deletedCategories.includes(cat))
+    .map(cat => renamedCategories[cat] || cat);
+
   // Load custom categories
   const customCategories = loadCustomCategories();
 
   // Merge and sort
-  const allCategories = [...new Set([...defaultCategories, ...customCategories])];
+  const allCategories = [...new Set([...processedDefaults, ...customCategories])];
   return allCategories.sort();
+}
+
+// Load deleted categories from localStorage
+function loadDeletedCategories() {
+  const saved = localStorage.getItem('deletedCategories_v2');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save deleted categories to localStorage
+function saveDeletedCategories(categories) {
+  localStorage.setItem('deletedCategories_v2', JSON.stringify(categories));
+}
+
+// Load renamed categories from localStorage (maps old name -> new name)
+function loadRenamedCategories() {
+  const saved = localStorage.getItem('renamedCategories_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save renamed categories to localStorage
+function saveRenamedCategories(renames) {
+  localStorage.setItem('renamedCategories_v2', JSON.stringify(renames));
 }
 
 // Load custom categories from localStorage
@@ -2588,22 +2619,51 @@ function addCustomCategory(categoryName) {
 
 // Delete a custom category
 function deleteCustomCategory(categoryName) {
-  const customCategories = loadCustomCategories();
-  const filtered = customCategories.filter(c => c !== categoryName);
-  saveCustomCategories(filtered);
+  console.log('=== DELETE PRODUCT TYPE ===');
+  console.log('Deleting:', categoryName);
 
-  // Also need to update any products using this category
+  // Check if it's a default category
+  const defaultCategories = [
+    'Dairy', 'Dairy - Cheese', 'Dairy - Butter', 'Dairy - Eggs', 'Dairy - Yogurt',
+    'Bread & Bakery', 'Meat & Proteins', 'Beverages', 'Alcoholic Beverages',
+    'Produce', 'Frozen Foods', 'Pantry - Pasta', 'Pantry - Grains',
+    'Pantry - Sauces', 'Pantry - Spices', 'Condiments & Spreads',
+    'Prepared Foods', 'Breakfast & Cereals', 'Snacks', 'Household',
+    'Personal Care', 'Pet Food', 'Other'
+  ];
+
+  if (defaultCategories.includes(categoryName)) {
+    // Add to deleted defaults list
+    const deletedCategories = loadDeletedCategories();
+    if (!deletedCategories.includes(categoryName)) {
+      deletedCategories.push(categoryName);
+      saveDeletedCategories(deletedCategories);
+      console.log('✓ Added to deleted defaults list');
+    }
+  } else {
+    // Remove from custom categories
+    const customCategories = loadCustomCategories();
+    const filtered = customCategories.filter(c => c !== categoryName);
+    saveCustomCategories(filtered);
+    console.log('✓ Removed from custom categories');
+  }
+
+  // Update any products using this category to "Other"
   const customMappings = loadCustomMappings();
   let updated = false;
   Object.keys(customMappings).forEach(rawName => {
-    if (customMappings[rawName].category === categoryName) {
-      customMappings[rawName].category = 'Other';
+    if (customMappings[rawName].productType === categoryName) {
+      customMappings[rawName].productType = 'Other';
+      customMappings[rawName].storeSection = mapProductTypeToStoreSection('Other');
       updated = true;
+      console.log('Updated product:', rawName);
     }
   });
   if (updated) {
     saveCustomMappings(customMappings);
+    console.log('✓ Updated products to use "Other"');
   }
+  console.log('=== DELETE COMPLETE ===');
 }
 
 // Render product library table
@@ -2842,10 +2902,10 @@ function handleAddCategory() {
   if (addCustomCategory(categoryName)) {
     input.value = '';
     const hint = document.getElementById('categoryHint');
-    hint.innerHTML = `✓ Category "<strong>${categoryName}</strong>" added! You can now assign products to it.`;
+    hint.innerHTML = `✓ Product Type "<strong>${categoryName}</strong>" added! You can now assign products to it.`;
     hint.style.color = '#28a745';
     setTimeout(() => {
-      hint.innerHTML = 'Type a new category name and click Add. You can then assign products to your custom categories.';
+      hint.innerHTML = 'Type a new product type name and click Add. You can then assign products to your custom types.';
       hint.style.color = '#666';
     }, 3000);
 
@@ -2858,15 +2918,7 @@ function handleAddCategory() {
 
 // Show category management modal
 function showCategoryManager() {
-  const customCategories = loadCustomCategories();
-  const defaultCategories = [
-    'Dairy', 'Dairy - Cheese', 'Dairy - Butter', 'Dairy - Eggs', 'Dairy - Yogurt',
-    'Bread & Bakery', 'Meat & Proteins', 'Beverages', 'Alcoholic Beverages',
-    'Produce', 'Frozen Foods', 'Pantry - Pasta', 'Pantry - Grains',
-    'Pantry - Sauces', 'Pantry - Spices', 'Condiments & Spreads',
-    'Prepared Foods', 'Breakfast & Cereals', 'Snacks', 'Household',
-    'Personal Care', 'Pet Food', 'Other'
-  ];
+  const allCategories = getAllCategories();
 
   const modal = document.getElementById('product-modal');
   const overlay = document.getElementById('modal-overlay');
@@ -2874,47 +2926,33 @@ function showCategoryManager() {
 
   content.innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
-    <h2>📁 Category Management</h2>
+    <h2>📁 Product Type Management</h2>
+    <p style="color: #666; margin-bottom: 20px;">Edit or delete any product type. Changes will update all products using that type.</p>
 
     <div style="margin: 20px 0;">
-      <h3>Default Categories (${defaultCategories.length})</h3>
-      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">
-        ${defaultCategories.map(cat => `
-          <span style="background: #e9ecef; padding: 6px 12px; border-radius: 4px; font-size: 13px;">${cat}</span>
+      <h3>All Product Types (${allCategories.length})</h3>
+      <div style="margin-top: 10px; max-height: 500px; overflow-y: auto;">
+        ${allCategories.map(cat => `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
+            <span style="font-weight: 500;">${cat}</span>
+            <div style="display: flex; gap: 8px;">
+              <button
+                class="btn"
+                onclick="handleRenameCategory('${cat.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Rename this product type"
+              >✏️ Rename</button>
+              <button
+                class="reset-btn"
+                onclick="handleDeleteCategory('${cat.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Delete this product type"
+              >🗑️ Delete</button>
+            </div>
+          </div>
         `).join('')}
       </div>
     </div>
-
-    ${customCategories.length > 0 ? `
-      <div style="margin: 20px 0;">
-        <h3>Custom Categories (${customCategories.length})</h3>
-        <div style="margin-top: 10px;">
-          ${customCategories.map(cat => `
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
-              <span style="font-weight: 500; color: #28a745;">${cat}</span>
-              <div style="display: flex; gap: 8px;">
-                <button
-                  class="btn"
-                  onclick="handleRenameCategory('${cat.replace(/'/g, "\\'")}')"
-                  style="padding: 6px 12px; font-size: 12px;"
-                  title="Rename this category"
-                >Rename</button>
-                <button
-                  class="reset-btn"
-                  onclick="handleDeleteCategory('${cat.replace(/'/g, "\\'")}')"
-                  style="padding: 6px 12px; font-size: 12px;"
-                  title="Delete this category"
-                >Delete</button>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : `
-      <div style="text-align: center; padding: 20px; color: #999;">
-        <p>No custom categories yet. Add one using the input above!</p>
-      </div>
-    `}
   `;
 
   modal.style.display = 'block';
@@ -3808,7 +3846,7 @@ function applyAllHighConfidence() {
 
 // Handle deleting a custom category
 function handleDeleteCategory(categoryName) {
-  if (!confirm(`Delete category "${categoryName}"?\n\nProducts using this category will be moved to "Other".`)) {
+  if (!confirm(`Delete product type "${categoryName}"?\n\nProducts using this type will be moved to "Other".`)) {
     return;
   }
 
@@ -3823,9 +3861,13 @@ function handleDeleteCategory(categoryName) {
 
 // Rename a category globally
 function renameCategory(oldName, newName) {
+  console.log('=== RENAME PRODUCT TYPE ===');
+  console.log('Old name:', oldName);
+  console.log('New name:', newName);
+
   const trimmed = newName.trim();
   if (!trimmed) {
-    alert('Category name cannot be empty');
+    alert('Product type name cannot be empty');
     return false;
   }
 
@@ -3835,37 +3877,60 @@ function renameCategory(oldName, newName) {
 
   const allCategories = getAllCategories();
   if (allCategories.includes(trimmed) && trimmed !== oldName) {
-    alert('A category with this name already exists');
+    alert('A product type with this name already exists');
     return false;
   }
 
-  // Update custom categories list
-  const customCategories = loadCustomCategories();
-  const index = customCategories.indexOf(oldName);
-  if (index !== -1) {
-    customCategories[index] = trimmed;
-    saveCustomCategories(customCategories);
+  // Check if it's a default category
+  const defaultCategories = [
+    'Dairy', 'Dairy - Cheese', 'Dairy - Butter', 'Dairy - Eggs', 'Dairy - Yogurt',
+    'Bread & Bakery', 'Meat & Proteins', 'Beverages', 'Alcoholic Beverages',
+    'Produce', 'Frozen Foods', 'Pantry - Pasta', 'Pantry - Grains',
+    'Pantry - Sauces', 'Pantry - Spices', 'Condiments & Spreads',
+    'Prepared Foods', 'Breakfast & Cereals', 'Snacks', 'Household',
+    'Personal Care', 'Pet Food', 'Other'
+  ];
+
+  if (defaultCategories.includes(oldName)) {
+    // Add to renamed defaults map
+    const renamedCategories = loadRenamedCategories();
+    renamedCategories[oldName] = trimmed;
+    saveRenamedCategories(renamedCategories);
+    console.log('✓ Added to renamed defaults map');
+  } else {
+    // Update custom categories list
+    const customCategories = loadCustomCategories();
+    const index = customCategories.indexOf(oldName);
+    if (index !== -1) {
+      customCategories[index] = trimmed;
+      saveCustomCategories(customCategories);
+      console.log('✓ Updated in custom categories list');
+    }
   }
 
   // Update all products using this category
   const customMappings = loadCustomMappings();
   let updated = false;
   Object.keys(customMappings).forEach(rawName => {
-    if (customMappings[rawName].category === oldName) {
-      customMappings[rawName].category = trimmed;
+    if (customMappings[rawName].productType === oldName) {
+      customMappings[rawName].productType = trimmed;
+      customMappings[rawName].storeSection = mapProductTypeToStoreSection(trimmed);
       updated = true;
+      console.log('Updated product:', rawName);
     }
   });
   if (updated) {
     saveCustomMappings(customMappings);
+    console.log('✓ Updated all products');
   }
 
+  console.log('=== RENAME COMPLETE ===');
   return true;
 }
 
 // Handle renaming a category
 function handleRenameCategory(oldName) {
-  const newName = prompt(`Rename category "${oldName}" to:`, oldName);
+  const newName = prompt(`Rename product type "${oldName}" to:`, oldName);
   if (newName === null) return; // User cancelled
 
   if (renameCategory(oldName, newName)) {
