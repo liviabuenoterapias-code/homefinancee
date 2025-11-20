@@ -395,9 +395,16 @@ function fixEncoding(text) {
 function standardizeProduct(rawName) {
   // Check for custom mapping first (from localStorage)
   if (typeof localStorage !== 'undefined') {
-    const customMappings = JSON.parse(localStorage.getItem('customProductMappings') || '{}');
-    if (customMappings[rawName]?.standardName) {
-      return customMappings[rawName].standardName;
+    // Use v2 key (new data structure)
+    const customMappings = JSON.parse(localStorage.getItem('customProductMappings_v2') || '{}');
+    if (customMappings[rawName]) {
+      // Check productName first (new structure), then fallback to standardName/shoppingListName (old structure)
+      const productName = customMappings[rawName].productName ||
+                         customMappings[rawName].shoppingListName ||
+                         customMappings[rawName].standardName;
+      if (productName) {
+        return productName;
+      }
     }
   }
 
@@ -423,9 +430,14 @@ function standardizeProduct(rawName) {
 function getCategory(standardizedName, rawName = null) {
   // Check for custom mapping first (from localStorage) using raw name if provided
   if (rawName && typeof localStorage !== 'undefined') {
-    const customMappings = JSON.parse(localStorage.getItem('customProductMappings') || '{}');
-    if (customMappings[rawName]?.category) {
-      return customMappings[rawName].category;
+    // Use v2 key (new data structure)
+    const customMappings = JSON.parse(localStorage.getItem('customProductMappings_v2') || '{}');
+    if (customMappings[rawName]) {
+      // Check productType first (new structure), then fallback to category (old structure)
+      const productType = customMappings[rawName].productType || customMappings[rawName].category;
+      if (productType) {
+        return productType;
+      }
     }
   }
 
