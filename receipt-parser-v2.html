@@ -2113,6 +2113,74 @@ function saveCustomMappings(mappings) {
 }
 
 // Build product library from all receipts
+
+// Swedish brand database for auto-detection
+const SWEDISH_BRANDS = {
+  dairy: ['ARLA', 'VALIO', 'LINDAHLS', 'DANONE', 'SKÅNEMEJERIER', 'NORRMEJERIER', 'GARANT'],
+  coffee: ['GEVALIA', 'LÖFBERGS', 'ZOEGA', 'ZOEGAS', 'CLASSIC', 'ARVID NORDQUIST', 'CIRKEL'],
+  beverages: ['COCA-COLA', 'PEPSI', 'LOKA', 'ZINGO', 'BRAVO', 'RAMLÖSA', 'FESTIS'],
+  meat: ['SCAN', 'DALSJÖFORS', 'CHRISTMAS', 'SVENSK FLÄSK', 'GYLLEBO'],
+  bread: ['PÅGEN', 'POLARBRÖD', 'BONJOUR', 'SKOGAHOLM', 'SCHULSTAD'],
+  store: ['ICA', 'COOP', 'GARANT', 'ELDORADO', 'FIRST PRICE', 'WILLYS'],
+  snacks: ['ESTRELLA', 'OLW', 'MARABOU', 'CLOETTA', 'FAZER'],
+  household: ['YES', 'ZALo', 'AJAX', 'CIF', 'MR MUSCLE'],
+  oil: ['ZETA', 'BORGES', 'MONINI', 'CARLSHAMN'],
+  pasta: ['BARILLA', 'GAROFALO', 'DE CECCO'],
+  frozen: ['FINDUS', 'FELIX', 'VIKING']
+};
+
+// Flatten all brands into a single searchable list
+const ALL_BRANDS = Object.values(SWEDISH_BRANDS).flat();
+
+// Extract brand from product name
+function extractBrand(productName) {
+  if (!productName) return null;
+
+  const upperName = productName.toUpperCase();
+
+  // Check for exact brand matches
+  for (const brand of ALL_BRANDS) {
+    // Use word boundary to avoid partial matches
+    const regex = new RegExp(`\\b${brand}\\b`, 'i');
+    if (regex.test(upperName)) {
+      return brand;
+    }
+  }
+
+  return null;
+}
+
+// Remove brand and details from product name to get clean product name
+function cleanProductName(rawName, brand) {
+  let cleaned = rawName.toUpperCase();
+
+  // Remove brand if found
+  if (brand) {
+    cleaned = cleaned.replace(new RegExp(`\\b${brand}\\b`, 'gi'), '').trim();
+  }
+
+  // Remove common details
+  cleaned = cleaned
+    .replace(/\d+\s*G\b/gi, '')       // 500G, 1KG
+    .replace(/\d+\s*KG\b/gi, '')
+    .replace(/\d+\s*ML\b/gi, '')      // 1L, 500ML
+    .replace(/\d+\s*L\b/gi, '')
+    .replace(/\d+\s*ST\b/gi, '')      // 20ST
+    .replace(/\d+\s*P\b/gi, '')       // 12P
+    .replace(/\d+\s*PACK\b/gi, '')    // 20-PACK
+    .replace(/\d+[,\.]\d+%/g, '')     // 1.5%, 3%
+    .replace(/\bEKOLOGISK\b/gi, '')
+    .replace(/\bSVENSK\b/gi, '')
+    .replace(/\bIMPORT\b/gi, '')
+    .replace(/\bCA\b/gi, '')          // Ca 2.2kg
+    .replace(/\bKLASS\s*\d+\b/gi, '') // Klass 1
+    .replace(/[-\/]/g, ' ')           // Replace dashes and slashes
+    .replace(/\s+/g, ' ')             // Normalize spaces
+    .trim();
+
+  return cleaned;
+}
+
 // Suggest a generic shopping list name from a product name
 function suggestShoppingListName(productName) {
   if (!productName) return '';
@@ -2195,16 +2263,37 @@ function buildProductLibrary() {
     receipt.items.forEach(item => {
       const rawName = item.name;
       if (!productMap.has(rawName)) {
-        // Get standardized name and category (from custom or default)
         const customData = customMappings[rawName];
-        const standardName = customData?.standardName || window.ProductCategories.standardizeProduct(rawName);
-        const category = customData?.category || window.ProductCategories.getCategory(standardName);
+
+        // Extract brand (from custom data or auto-detect)
+        const brand = customData?.brand || extractBrand(rawName);
+
+        // Get product name (from custom or auto-clean)
+        let productName;
+        if (customData?.productName) {
+          productName = customData.productName;
+        } else if (customData?.shoppingListName) {
+          // Migrate old shoppingListName to productName
+          productName = customData.shoppingListName;
+        } else {
+          // Auto-generate: clean the raw name and suggest
+          const cleaned = cleanProductName(rawName, brand);
+          productName = suggestShoppingListName(cleaned);
+        }
+
+        // Get product type (renamed from category)
+        const productType = customData?.productType || customData?.category ||
+                           window.ProductCategories.getCategory(productName);
+
+        // Get store section (from custom or map from product type)
+        const storeSection = customData?.storeSection || mapProductTypeToStoreSection(productType);
 
         productMap.set(rawName, {
           rawName: rawName,
-          standardName: standardName,
-          shoppingListName: customData?.shoppingListName || suggestShoppingListName(standardName),
-          category: category,
+          productName: productName,
+          brand: brand,
+          productType: productType,
+          storeSection: storeSection,
           count: 0,
           totalSpent: 0,
           lastSeen: receipt.date,
@@ -2222,6 +2311,35 @@ function buildProductLibrary() {
   });
 
   return Array.from(productMap.values()).sort((a, b) => b.count - a.count);
+}
+
+// Map product type to store section
+function mapProductTypeToStoreSection(productType) {
+  const mapping = {
+    'Beverages': 'dryck',
+    'Alcoholic Beverages': 'dryck',
+    'Produce': 'frukt-gront',
+    'Bread & Bakery': 'brod',
+    'Dairy': 'kylskap',
+    'Dairy - Cheese': 'kylskap',
+    'Dairy - Butter': 'kylskap',
+    'Dairy - Eggs': 'kylskap',
+    'Dairy - Yogurt': 'kylskap',
+    'Meat & Proteins': 'kylskap',
+    'Frozen Foods': 'fryst',
+    'Pantry - Spices': 'kryddor',
+    'Pantry - Pasta': 'skafferi',
+    'Pantry - Grains': 'skafferi',
+    'Pantry - Sauces': 'skafferi',
+    'Condiments & Spreads': 'skafferi',
+    'Breakfast & Cereals': 'skafferi',
+    'Snacks': 'snacks-godis',
+    'Personal Care': 'halsa-skonhet',
+    'Household': 'icke-mat',
+    'Other': 'skafferi'
+  };
+
+  return mapping[productType] || 'skafferi';
 }
 
 // Get all unique categories
