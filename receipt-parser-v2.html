@@ -206,10 +206,13 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
 
       <!-- Quality Check Agent -->
       <div style="background: #e7f3ff; border: 1px solid #2196F3; padding: 15px; border-radius: 8px; margin: 15px 0;">
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
           <strong>🤖 Quality Check:</strong>
           <button onclick="runQualityCheck()" class="btn" style="padding: 8px 20px; background: #2196F3; color: white;">
             🔍 Scan Products
+          </button>
+          <button onclick="clearIgnoredSuggestions()" class="btn" style="padding: 6px 14px; background: #f57c00; color: white; font-size: 12px;">
+            🔄 Reset Ignored
           </button>
           <span id="quality-check-status" style="font-size: 13px; color: #666;"></span>
         </div>
@@ -2881,6 +2884,46 @@ function importCustomData(event) {
 // Store suggestions globally for access by action functions
 let currentQualitySuggestions = [];
 
+// Load ignored suggestions from localStorage
+function loadIgnoredSuggestions() {
+  const saved = localStorage.getItem('ignoredQualitySuggestions');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save ignored suggestions to localStorage
+function saveIgnoredSuggestions(ignored) {
+  localStorage.setItem('ignoredQualitySuggestions', JSON.stringify(ignored));
+}
+
+// Check if a suggestion should be ignored
+function isSuggestionIgnored(rawName, suggestionType) {
+  const ignored = loadIgnoredSuggestions();
+  return ignored[rawName] && ignored[rawName].includes(suggestionType);
+}
+
+// Add a suggestion to ignored list
+function addIgnoredSuggestion(rawName, suggestionType) {
+  const ignored = loadIgnoredSuggestions();
+  if (!ignored[rawName]) {
+    ignored[rawName] = [];
+  }
+  if (!ignored[rawName].includes(suggestionType)) {
+    ignored[rawName].push(suggestionType);
+  }
+  saveIgnoredSuggestions(ignored);
+}
+
+// Clear all ignored suggestions
+function clearIgnoredSuggestions() {
+  if (!confirm('Clear all ignored suggestions?\n\nThis will show all previously ignored suggestions in the next scan.')) {
+    return;
+  }
+
+  localStorage.removeItem('ignoredQualitySuggestions');
+  showMessage('All ignored suggestions cleared', 'success');
+  console.log('Cleared all ignored suggestions');
+}
+
 // Main scanner function
 function scanProductQuality(products) {
   const suggestions = [];
@@ -2895,29 +2938,41 @@ function scanProductQuality(products) {
   });
 
   products.forEach(product => {
-    // Issue 1: Missing brand (brand exists in raw name but not extracted)
+    // Issue 1: Missing brand (shows ALL products without brands)
     const missingBrand = detectMissingBrand(product);
-    if (missingBrand) suggestions.push(missingBrand);
+    if (missingBrand && !isSuggestionIgnored(product.rawName, missingBrand.type)) {
+      suggestions.push(missingBrand);
+    }
 
     // Issue 2: Brand still in product name
     const brandInName = detectBrandInProductName(product);
-    if (brandInName) suggestions.push(brandInName);
+    if (brandInName && !isSuggestionIgnored(product.rawName, brandInName.type)) {
+      suggestions.push(brandInName);
+    }
 
-    // Issue 3: Size/weight still in product name
+    // Issue 3: Size/weight still in product name (DISABLED)
     const sizeInName = detectSizeInProductName(product);
-    if (sizeInName) suggestions.push(sizeInName);
+    if (sizeInName && !isSuggestionIgnored(product.rawName, sizeInName.type)) {
+      suggestions.push(sizeInName);
+    }
 
     // Issue 4: Wrong product type (category)
     const wrongCategory = detectWrongCategory(product);
-    if (wrongCategory) suggestions.push(wrongCategory);
+    if (wrongCategory && !isSuggestionIgnored(product.rawName, wrongCategory.type)) {
+      suggestions.push(wrongCategory);
+    }
 
     // Issue 5: Store section mismatch
     const sectionMismatch = detectStoreSectionMismatch(product);
-    if (sectionMismatch) suggestions.push(sectionMismatch);
+    if (sectionMismatch && !isSuggestionIgnored(product.rawName, sectionMismatch.type)) {
+      suggestions.push(sectionMismatch);
+    }
 
     // Issue 6: Product name too similar to raw name (not cleaned enough)
     const notCleaned = detectNotCleanedEnough(product);
-    if (notCleaned) suggestions.push(notCleaned);
+    if (notCleaned && !isSuggestionIgnored(product.rawName, notCleaned.type)) {
+      suggestions.push(notCleaned);
+    }
   });
 
   // Sort by confidence (High -> Medium -> Low)
@@ -2934,20 +2989,32 @@ function detectMissingBrand(product) {
   if (product.brand) return null; // Already has brand
 
   const upperRaw = product.rawName.toUpperCase();
+
+  // First, try to detect brand from raw name (HIGH confidence)
   for (const brand of ALL_BRANDS) {
     const regex = new RegExp(`\\b${brand}\\b`, 'i');
     if (regex.test(upperRaw)) {
       return {
         type: 'missing_brand',
         rawName: product.rawName,
-        current: { brand: product.brand || '(none)' },
+        current: { brand: product.brand || '(empty)' },
         suggested: { brand: brand },
         reason: `Found "${brand}" in receipt name but brand field is empty`,
         confidence: 'high'
       };
     }
   }
-  return null;
+
+  // If we can't detect brand, still show it as needing manual entry (LOW confidence)
+  return {
+    type: 'missing_brand_manual',
+    rawName: product.rawName,
+    current: { brand: '(empty)' },
+    suggested: { brand: '(manual entry needed)' },
+    reason: 'Brand field is empty - add brand manually for better tracking',
+    confidence: 'low',
+    requiresManualEntry: true
+  };
 }
 
 // Detect brand still in product name
@@ -3236,15 +3303,24 @@ function renderSuggestion(sug, index) {
       ${changesHtml}
 
       <div style="display: flex; gap: 8px; margin-top: 12px;">
-        <button onclick="applySuggestion(${index})" class="btn" style="background: #28a745; color: white; padding: 6px 16px; font-size: 13px;">
-          ✓ Apply
-        </button>
-        <button onclick="ignoreSuggestion(${index})" class="btn" style="background: #6c757d; color: white; padding: 6px 16px; font-size: 13px;">
-          ✗ Ignore
-        </button>
-        <button onclick="editSuggestion('${sug.rawName.replace(/'/g, "\\'")}', ${index})" class="btn" style="background: #ffc107; color: #000; padding: 6px 16px; font-size: 13px;">
-          ✏️ Edit
-        </button>
+        ${sug.requiresManualEntry ? `
+          <button onclick="editSuggestion('${sug.rawName.replace(/'/g, "\\'")}', ${index})" class="btn" style="background: #2196F3; color: white; padding: 8px 20px; font-size: 14px; font-weight: bold;">
+            ✏️ Add Brand Manually
+          </button>
+          <button onclick="ignoreSuggestion(${index})" class="btn" style="background: #6c757d; color: white; padding: 6px 16px; font-size: 13px;">
+            ✗ Ignore
+          </button>
+        ` : `
+          <button onclick="applySuggestion(${index})" class="btn" style="background: #28a745; color: white; padding: 6px 16px; font-size: 13px;">
+            ✓ Apply
+          </button>
+          <button onclick="ignoreSuggestion(${index})" class="btn" style="background: #6c757d; color: white; padding: 6px 16px; font-size: 13px;">
+            ✗ Ignore
+          </button>
+          <button onclick="editSuggestion('${sug.rawName.replace(/'/g, "\\'")}', ${index})" class="btn" style="background: #ffc107; color: #000; padding: 6px 16px; font-size: 13px;">
+            ✏️ Edit
+          </button>
+        `}
       </div>
     </div>
   `;
@@ -3372,6 +3448,11 @@ function ignoreSuggestion(index) {
   }
 
   const sug = currentQualitySuggestions[index];
+
+  // Save this as ignored so it won't show up next time
+  console.log(`Saving as ignored: ${sug.rawName} - ${sug.type}`);
+  addIgnoredSuggestion(sug.rawName, sug.type);
+
   showMessage(`Ignored suggestion for "${sug.rawName}"`, 'info');
 
   const element = document.getElementById(`suggestion-${index}`);
