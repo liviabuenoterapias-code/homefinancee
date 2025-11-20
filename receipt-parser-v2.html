@@ -1090,22 +1090,89 @@ function renderTagFilter() {
         <span style="font-size: 20px;">▼</span>
       </div>
       <div id="tag-filter-content" class="section-content">
-        <p style="margin-bottom: 15px; color: #666;">Click on a tag to see all products with that tag</p>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px;">
-          ${tags.map(tag => `
-            <button
-              onclick="showProductsByTag('${tag}')"
-              class="btn"
-              style="background: #667eea; padding: 6px 10px; font-size: 12px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-              ${tag}
-            </button>
-          `).join('')}
+        <p style="margin-bottom: 15px; color: #666;">Search and select a tag to see all products with that tag</p>
+        <div style="position: relative; max-width: 400px;">
+          <input
+            type="text"
+            id="tagFilterSearch"
+            placeholder="Type to search tags..."
+            autocomplete="off"
+            style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+            onfocus="showTagDropdown()"
+            oninput="filterTagDropdown()"
+            onblur="setTimeout(() => hideTagDropdown(), 200)"
+          />
+          <div id="tagDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #667eea; border-top: none; border-radius: 0 0 6px 6px; max-height: 300px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+            ${tags.map(tag => `
+              <div
+                class="tag-dropdown-item"
+                data-tag="${tag}"
+                onclick="selectTagFromDropdown('${tag}')"
+                style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; transition: background 0.2s;"
+                onmouseover="this.style.background='#f5f7ff'"
+                onmouseout="this.style.background='white'"
+              >
+                ${tag}
+              </div>
+            `).join('')}
+          </div>
         </div>
       </div>
     </div>
   `;
 
   document.getElementById('tag-filter-section').innerHTML = html;
+}
+
+// Show tag dropdown
+function showTagDropdown() {
+  const dropdown = document.getElementById('tagDropdown');
+  if (dropdown) {
+    dropdown.style.display = 'block';
+  }
+}
+
+// Hide tag dropdown
+function hideTagDropdown() {
+  const dropdown = document.getElementById('tagDropdown');
+  if (dropdown) {
+    dropdown.style.display = 'none';
+  }
+}
+
+// Filter tag dropdown based on search input
+function filterTagDropdown() {
+  const searchInput = document.getElementById('tagFilterSearch');
+  const dropdown = document.getElementById('tagDropdown');
+
+  if (!searchInput || !dropdown) return;
+
+  const searchTerm = searchInput.value.toLowerCase();
+  const items = dropdown.querySelectorAll('.tag-dropdown-item');
+
+  let visibleCount = 0;
+  items.forEach(item => {
+    const tag = item.getAttribute('data-tag').toLowerCase();
+    if (tag.includes(searchTerm)) {
+      item.style.display = 'block';
+      visibleCount++;
+    } else {
+      item.style.display = 'none';
+    }
+  });
+
+  // Show dropdown if there are visible items
+  dropdown.style.display = visibleCount > 0 ? 'block' : 'none';
+}
+
+// Select a tag from dropdown
+function selectTagFromDropdown(tag) {
+  const searchInput = document.getElementById('tagFilterSearch');
+  if (searchInput) {
+    searchInput.value = tag;
+  }
+  hideTagDropdown();
+  showProductsByTag(tag);
 }
 
 function renderTrends() {
