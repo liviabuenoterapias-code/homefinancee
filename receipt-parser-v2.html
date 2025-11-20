@@ -3001,6 +3001,12 @@ function scanProductQuality(products) {
     if (notCleaned && !isSuggestionIgnored(product.rawName, notCleaned.type)) {
       suggestions.push(notCleaned);
     }
+
+    // Issue 7: Product name too specific (could be simplified for shopping list)
+    const tooSpecific = detectOverlySpecificProductName(product);
+    if (tooSpecific && !isSuggestionIgnored(product.rawName, tooSpecific.type)) {
+      suggestions.push(tooSpecific);
+    }
   });
 
   // Sort by confidence (High -> Medium -> Low)
@@ -3245,6 +3251,92 @@ function levenshteinDistance(str1, str2) {
   }
 
   return matrix[str2.length][str1.length];
+}
+
+// Detect overly specific product names that could be simplified for shopping lists
+function detectOverlySpecificProductName(product) {
+  if (!product.productName) return null;
+
+  // Skip if custom mapping exists (user intentionally set it)
+  const customMappings = loadCustomMappings();
+  if (customMappings[product.rawName]?.productName) return null;
+
+  const lowerName = product.productName.toLowerCase();
+
+  // Pattern 1: Milk variants (Standardmjölk, Mellanmjölk, Minimjölk → MJÖLK)
+  const milkVariants = [
+    { pattern: /^standard\s*mj[öo]lk/i, base: 'MJÖLK', type: 'standard milk (3%)' },
+    { pattern: /^mellan\s*mj[öo]lk/i, base: 'MJÖLK', type: 'medium milk (1.5%)' },
+    { pattern: /^mini\s*mj[öo]lk/i, base: 'MJÖLK', type: 'mini milk (0.5%)' },
+    { pattern: /^l[äa]tt\s*mj[öo]lk/i, base: 'MJÖLK', type: 'light milk' },
+    { pattern: /^laktosfri\s*mj[öo]lk/i, base: 'MJÖLK LAKTOSFRI', type: 'lactose-free milk (may be different product)' },
+    { pattern: /^mj[öo]lk\s+[\d,]+%/i, base: 'MJÖLK', type: 'milk with fat %' }
+  ];
+
+  for (const variant of milkVariants) {
+    if (variant.pattern.test(lowerName)) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: variant.base },
+        reason: `Milk fat % variants are usually interchangeable for shopping lists. Consider "${variant.base}" to group all milk types. Keep specific if you ONLY buy ${variant.type}.`,
+        confidence: 'low'
+      };
+    }
+  }
+
+  // Pattern 2: Fat percentages in other products
+  if (lowerName.match(/\s+[\d,]+%\s*$/)) {
+    const withoutPercent = product.productName.replace(/\s+[\d,]+%\s*$/i, '').trim();
+    if (withoutPercent && withoutPercent !== product.productName) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: withoutPercent },
+        reason: 'Fat % might not matter for shopping lists (e.g., "Ost 17%" → "OST"). Keep specific if you need this exact fat %.',
+        confidence: 'low'
+      };
+    }
+  }
+
+  // Pattern 3: "Naturell" variants (but NOT Greek/Turkish yogurt - those are different!)
+  if (lowerName.includes('naturell') && !lowerName.includes('yoghurt') && !lowerName.includes('yogurt')) {
+    const withoutNaturell = product.productName.replace(/\s*naturell\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (withoutNaturell && withoutNaturell !== product.productName) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: withoutNaturell },
+        reason: '"Naturell" might not matter for shopping lists. Keep if you specifically need plain/natural variant.',
+        confidence: 'low'
+      };
+    }
+  }
+
+  // Pattern 4: "Ekologisk" / "Organic" (user might want to track separately)
+  if (lowerName.includes('ekologisk') || lowerName.includes('eko ')) {
+    const withoutEko = product.productName
+      .replace(/\s*ekologisk\s*/gi, ' ')
+      .replace(/\s+eko\s+/gi, ' ')
+      .replace(/^eko\s+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (withoutEko && withoutEko !== product.productName) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: withoutEko },
+        reason: 'Remove "Ekologisk" if organic/non-organic are interchangeable for your shopping. Keep if you specifically buy organic.',
+        confidence: 'low'
+      };
+    }
+  }
+
+  return null;
 }
 
 // Show quality check modal with suggestions
