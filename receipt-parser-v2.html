@@ -942,10 +942,24 @@ function refreshAnalysis() {
 }
 
 // Get all unique tags from all products
+// Load master tag list (tags created but not yet used)
+function loadMasterTags() {
+  const saved = localStorage.getItem('masterTagList');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save master tag list
+function saveMasterTags(tags) {
+  localStorage.setItem('masterTagList', JSON.stringify(tags));
+}
+
+// Get all tags (both used on products AND master tag list)
 function getAllTags() {
   const customMappings = loadCustomMappings();
-  const allTags = new Set();
+  const masterTags = loadMasterTags();
+  const allTags = new Set(masterTags); // Start with master tags
 
+  // Add tags that are actually used on products
   Object.values(customMappings).forEach(mapping => {
     if (mapping.tags && Array.isArray(mapping.tags)) {
       mapping.tags.forEach(tag => allTags.add(tag));
@@ -3761,11 +3775,6 @@ function handleRenameCategory(oldName) {
 function showTagManager() {
   const allTags = getAllTags();
 
-  if (allTags.length === 0) {
-    alert('No tags found. Add tags to your products first!');
-    return;
-  }
-
   // Count products per tag
   const customMappings = loadCustomMappings();
   const tagCounts = {};
@@ -3788,10 +3797,37 @@ function showTagManager() {
   content.innerHTML = `
     <span class="close-modal" onclick="closeModal()">&times;</span>
     <h2>🏷️ Tag Management</h2>
-    <p style="color: #666; margin-bottom: 20px;">Manage all your tags. Renaming a tag will update it across all products. Deleting a tag will remove it from all products.</p>
+    <p style="color: #666; margin-bottom: 20px;">Create tags to organize your products. Use tags to group items by meal (breakfast, dinner), type (staple, treat), or any category that helps you shop.</p>
+
+    <!-- Create New Tag -->
+    <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #4caf50;">
+      <h3 style="margin-top: 0;">➕ Create New Tag</h3>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <input
+          type="text"
+          id="new-tag-input"
+          placeholder="e.g., breakfast, staple, favorite..."
+          style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;"
+          onkeypress="if(event.key === 'Enter') { handleCreateTag(); }"
+        />
+        <button
+          class="btn"
+          onclick="handleCreateTag()"
+          style="padding: 10px 20px; background: #4caf50; color: white; font-weight: bold;"
+        >+ Create Tag</button>
+      </div>
+      <div style="font-size: 12px; color: #2e7d32; margin-top: 8px;">
+        💡 Create tags here, then add them to products in the Product Library
+      </div>
+    </div>
 
     <div style="margin: 20px 0;">
       <h3>All Tags (${allTags.length})</h3>
+      ${allTags.length === 0 ? `
+        <p style="color: #999; text-align: center; padding: 20px;">
+          No tags yet. Create your first tag above!
+        </p>
+      ` : `
       <div style="margin-top: 10px;">
         ${allTags.sort().map(tag => `
           <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
@@ -3816,11 +3852,51 @@ function showTagManager() {
           </div>
         `).join('')}
       </div>
+      `}
     </div>
   `;
 
   modal.style.display = 'block';
   overlay.style.display = 'block';
+
+  // Focus on the input
+  setTimeout(() => {
+    const input = document.getElementById('new-tag-input');
+    if (input) input.focus();
+  }, 100);
+}
+
+// Handle creating a new tag
+function handleCreateTag() {
+  const input = document.getElementById('new-tag-input');
+  if (!input) return;
+
+  const newTag = input.value.trim().toLowerCase();
+
+  if (!newTag) {
+    alert('Please enter a tag name');
+    return;
+  }
+
+  // Check if tag already exists
+  const allTags = getAllTags();
+  if (allTags.includes(newTag)) {
+    alert('This tag already exists!');
+    input.value = '';
+    input.focus();
+    return;
+  }
+
+  // Add to master tag list
+  const masterTags = loadMasterTags();
+  masterTags.push(newTag);
+  saveMasterTags(masterTags);
+
+  console.log(`✓ Created tag: "${newTag}"`);
+  showMessage(`✓ Tag "${newTag}" created! Now available in Product Library.`, 'success');
+
+  // Refresh the tag manager modal
+  showTagManager();
 }
 
 // Delete a tag globally
@@ -3828,6 +3904,7 @@ function deleteTag(tagName) {
   const customMappings = loadCustomMappings();
   let updated = false;
 
+  // Remove from all products
   Object.keys(customMappings).forEach(rawName => {
     const mapping = customMappings[rawName];
     if (mapping.tags && Array.isArray(mapping.tags)) {
@@ -3841,6 +3918,13 @@ function deleteTag(tagName) {
 
   if (updated) {
     saveCustomMappings(customMappings);
+  }
+
+  // Also remove from master tag list
+  const masterTags = loadMasterTags();
+  const filteredMasterTags = masterTags.filter(t => t !== tagName);
+  if (filteredMasterTags.length !== masterTags.length) {
+    saveMasterTags(filteredMasterTags);
   }
 }
 
@@ -3888,6 +3972,7 @@ function renameTag(oldTag, newTag) {
   const customMappings = loadCustomMappings();
   let updated = false;
 
+  // Rename in all products
   Object.keys(customMappings).forEach(rawName => {
     const mapping = customMappings[rawName];
     if (mapping.tags && Array.isArray(mapping.tags)) {
@@ -3901,6 +3986,14 @@ function renameTag(oldTag, newTag) {
 
   if (updated) {
     saveCustomMappings(customMappings);
+  }
+
+  // Also rename in master tag list
+  const masterTags = loadMasterTags();
+  const masterIndex = masterTags.indexOf(oldTag);
+  if (masterIndex !== -1) {
+    masterTags[masterIndex] = trimmed;
+    saveMasterTags(masterTags);
   }
 
   return true;
