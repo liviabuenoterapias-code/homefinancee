@@ -5176,23 +5176,39 @@ function clearCheckedItems() {
 
 // Clear all suggested items (keeps manually added items)
 function clearAllSuggestions() {
+  console.log('=== CLEAR ALL SUGGESTIONS ===');
   const list = loadShoppingList();
-  const manualItems = list.filter(i => !i.isRecurrent);
-  const suggestedCount = list.filter(i => i.isRecurrent).length;
+  console.log('Current shopping list:', list);
 
-  if (suggestedCount === 0) {
+  // Filter:
+  // - Keep items with isRecurrent === false (manually added)
+  // - Keep items with isRecurrent === undefined (old items added before this feature, treat as manual)
+  // - Remove items with isRecurrent === true (AI suggestions)
+  const manualItems = list.filter(i => i.isRecurrent !== true);
+  const suggestedItems = list.filter(i => i.isRecurrent === true);
+
+  console.log('Manual items (will keep):', manualItems);
+  console.log('Suggested items (will clear):', suggestedItems);
+  console.log('Suggested count:', suggestedItems.length);
+
+  if (suggestedItems.length === 0) {
     showMessage('No suggested items to clear', 'info');
     return;
   }
 
-  if (!confirm(`Remove all ${suggestedCount} suggested item(s)?\n\nManually added items will remain.`)) return;
+  if (!confirm(`Remove all ${suggestedItems.length} suggested item(s)?\n\n${manualItems.length} manually added items will remain.`)) return;
 
   saveShoppingList(manualItems);
   renderShoppingList();
-  showMessage(`${suggestedCount} suggested items cleared`, 'success');
+  showMessage(`${suggestedItems.length} suggested items cleared`, 'success');
 
   // Also hide the suggestions section
-  document.getElementById('suggestions-section').style.display = 'none';
+  const suggestionsSection = document.getElementById('suggestions-section');
+  if (suggestionsSection) {
+    suggestionsSection.style.display = 'none';
+  }
+
+  console.log('✓ Suggestions cleared');
 }
 
 // Add manual item
