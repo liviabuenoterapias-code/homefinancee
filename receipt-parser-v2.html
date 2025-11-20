@@ -2258,10 +2258,17 @@ function migrateOldDataStructure() {
 
 // Save custom product mappings to localStorage
 function saveCustomMappings(mappings) {
+  console.log('💾 Saving custom mappings to localStorage...');
   localStorage.setItem('customProductMappings_v2', JSON.stringify(mappings));
+  console.log('✓ Saved to localStorage');
+
   // Reload analysis to reflect changes
   if (allReceipts.length > 0) {
+    console.log('📊 Refreshing Analysis tab...');
     refreshAnalysis();
+    console.log('✓ Analysis refreshed');
+  } else {
+    console.log('⚠️ No receipts loaded, skipping analysis refresh');
   }
 }
 
@@ -2585,7 +2592,9 @@ function deleteCustomCategory(categoryName) {
 
 // Render product library table
 function renderProductLibrary(searchFilter = '') {
+  console.log('📚 Rendering Product Library...');
   const products = buildProductLibrary();
+  console.log('Built product library:', products.length, 'products');
   const filteredProducts = searchFilter
     ? products.filter(p => {
         const tags = getProductTagsByRawName(p.rawName);
@@ -2735,9 +2744,14 @@ function renderProductLibrary(searchFilter = '') {
 
 // Update product mapping
 function updateProductMapping(element) {
+  console.log('=== UPDATE PRODUCT MAPPING ===');
   const rawName = element.getAttribute('data-raw');
   const field = element.getAttribute('data-field');
   const value = element.value.trim();
+
+  console.log('Raw Name:', rawName);
+  console.log('Field:', field);
+  console.log('New Value:', value);
 
   if (!value && field !== 'brand') {
     alert('Value cannot be empty');
@@ -2746,6 +2760,7 @@ function updateProductMapping(element) {
   }
 
   const customMappings = loadCustomMappings();
+  console.log('Current custom mappings for this product:', customMappings[rawName]);
 
   if (!customMappings[rawName]) {
     // Initialize with new structure
@@ -2760,10 +2775,14 @@ function updateProductMapping(element) {
       productType: productType,
       storeSection: mapProductTypeToStoreSection(productType)
     };
+    console.log('Initialized new mapping:', customMappings[rawName]);
   }
 
   customMappings[rawName][field] = value;
+  console.log('Updated mapping:', customMappings[rawName]);
+
   saveCustomMappings(customMappings);
+  console.log('✓ Saved to localStorage');
 
   // If this is a productType field and it's a new category, add it to custom categories
   if (field === 'productType') {
@@ -2772,10 +2791,13 @@ function updateProductMapping(element) {
       const customCategories = loadCustomCategories();
       customCategories.push(value);
       saveCustomCategories(customCategories);
+      console.log('✓ Added new custom category:', value);
     }
   }
 
+  console.log('Refreshing Product Library...');
   renderProductLibrary(document.getElementById('productSearch').value);
+  console.log('=== UPDATE COMPLETE ===');
 }
 
 // Add search handler
