@@ -2194,7 +2194,7 @@ function saveCustomMappings(mappings) {
   localStorage.setItem('customProductMappings_v2', JSON.stringify(mappings));
   // Reload analysis to reflect changes
   if (allReceipts.length > 0) {
-    renderAnalysis();
+    refreshAnalysis();
   }
 }
 
@@ -2876,7 +2876,7 @@ function importCustomData(event) {
 
       // Refresh the display
       if (allReceipts.length > 0) {
-        renderAnalysis();
+        refreshAnalysis();
       }
       renderProductLibrary(document.getElementById('productSearch')?.value || '');
 
