@@ -2973,45 +2973,8 @@ function detectBrandInProductName(product) {
 
 // Detect size/weight in product name
 function detectSizeInProductName(product) {
-  if (!product.productName) return null;
-
-  const sizePatterns = [
-    /\d+\s*[gG]\b/,           // 500G, 1g
-    /\d+\s*[kK][gG]\b/,       // 1KG, 2kg
-    /\d+\s*[mM][lL]\b/,       // 500ML, 1ml
-    /\d+\s*[lL]\b/,           // 1L, 2l
-    /\d+\s*[sS][tT]\b/,       // 12ST, 20st
-    /\d+\s*[pP]\b/,           // 6P, 12p
-    /\d+\s*[pP][aA][cC][kK]/, // 20-PACK
-    /\d+[,\.]\d+%/            // 1.5%, 3%
-  ];
-
-  for (const pattern of sizePatterns) {
-    if (pattern.test(product.productName)) {
-      const cleaned = product.productName
-        .replace(/\d+\s*[gG]\b/g, '')
-        .replace(/\d+\s*[kK][gG]\b/g, '')
-        .replace(/\d+\s*[mM][lL]\b/g, '')
-        .replace(/\d+\s*[lL]\b/g, '')
-        .replace(/\d+\s*[sS][tT]\b/g, '')
-        .replace(/\d+\s*[pP]\b/g, '')
-        .replace(/\d+\s*[pP][aA][cC][kK]/gi, '')
-        .replace(/\d+[,\.]\d+%/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      if (cleaned && cleaned !== product.productName) {
-        return {
-          type: 'size_in_name',
-          rawName: product.rawName,
-          current: { productName: product.productName },
-          suggested: { productName: cleaned },
-          reason: 'Product name contains size/weight - should be generic',
-          confidence: 'medium'
-        };
-      }
-    }
-  }
+  // DISABLED: Sizes are important for price tracking (200G vs 400G have different prices)
+  // User preference: keep sizes in product names for accurate price comparison
   return null;
 }
 
@@ -3315,72 +3278,88 @@ function runQualityCheck() {
 
 // Apply a single suggestion
 function applySuggestion(index) {
-  console.log('Applying suggestion', index);
+  try {
+    console.log('=== APPLY SUGGESTION START ===');
+    console.log('Index:', index);
 
-  if (!currentQualitySuggestions[index]) {
-    console.error('Suggestion not found:', index);
-    alert('Error: Suggestion not found');
-    return;
-  }
+    if (!currentQualitySuggestions[index]) {
+      console.error('Suggestion not found:', index);
+      alert('Error: Suggestion not found');
+      return;
+    }
 
-  const sug = currentQualitySuggestions[index];
-  console.log('Applying changes to:', sug.rawName, sug.suggested);
+    const sug = currentQualitySuggestions[index];
+    console.log('Applying changes to:', sug.rawName, sug.suggested);
 
-  const customMappings = loadCustomMappings();
+    const customMappings = loadCustomMappings();
 
-  if (!customMappings[sug.rawName]) {
-    customMappings[sug.rawName] = {};
-  }
+    if (!customMappings[sug.rawName]) {
+      customMappings[sug.rawName] = {};
+    }
 
-  // Apply all suggested fields
-  Object.keys(sug.suggested).forEach(field => {
-    customMappings[sug.rawName][field] = sug.suggested[field];
-    console.log(`  ${field}: ${sug.suggested[field]}`);
-  });
+    // Apply all suggested fields
+    Object.keys(sug.suggested).forEach(field => {
+      customMappings[sug.rawName][field] = sug.suggested[field];
+      console.log(`  ${field}: ${sug.suggested[field]}`);
+    });
 
-  saveCustomMappings(customMappings);
-  console.log('✓ Changes saved to localStorage');
+    saveCustomMappings(customMappings);
+    console.log('✓ Changes saved to localStorage');
 
-  // Show immediate feedback toast
-  showMessage(`✓ Applied changes to "${sug.rawName}"`, 'success');
+    // Show immediate feedback toast
+    console.log('Showing toast message...');
+    showMessage(`✓ Applied changes to "${sug.rawName}"`, 'success');
+    console.log('Toast message called');
 
-  // Remove from list and update UI
-  const element = document.getElementById(`suggestion-${index}`);
-  if (element) {
-    // Immediate visual feedback
-    element.style.transition = 'all 0.3s ease';
-    element.style.opacity = '0.5';
-    element.style.transform = 'scale(0.95)';
-    element.style.background = '#d4edda';
-    element.innerHTML = `
-      <div style="padding: 30px; text-align: center;">
-        <div style="font-size: 48px; margin-bottom: 10px;">✓</div>
-        <div style="font-size: 16px; color: #155724; font-weight: bold;">Applied!</div>
-      </div>
-    `;
+    // Remove from list and update UI
+    const element = document.getElementById(`suggestion-${index}`);
+    console.log('Element found:', element ? 'YES' : 'NO');
 
-    setTimeout(() => {
-      element.style.opacity = '0';
+    if (element) {
+      // Immediate visual feedback
+      console.log('Applying visual feedback...');
+      element.style.transition = 'all 0.3s ease';
+      element.style.opacity = '0.5';
+      element.style.transform = 'scale(0.95)';
+      element.style.background = '#d4edda';
+      element.innerHTML = `
+        <div style="padding: 30px; text-align: center;">
+          <div style="font-size: 48px; margin-bottom: 10px;">✓</div>
+          <div style="font-size: 16px; color: #155724; font-weight: bold;">Applied!</div>
+        </div>
+      `;
+      console.log('Visual feedback applied');
+
       setTimeout(() => {
-        element.remove();
+        element.style.opacity = '0';
+        setTimeout(() => {
+          element.remove();
 
-        // Check if all suggestions handled
-        const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
-        if (remaining === 0) {
-          showMessage('All suggestions reviewed!', 'success');
-          setTimeout(() => {
-            closeModal();
-            renderProductLibrary(document.getElementById('productSearch')?.value || '');
-          }, 500);
-        }
-      }, 300);
-    }, 800);
-  } else {
-    console.error('Element not found:', `suggestion-${index}`);
+          // Check if all suggestions handled
+          const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+          if (remaining === 0) {
+            showMessage('All suggestions reviewed!', 'success');
+            setTimeout(() => {
+              closeModal();
+              renderProductLibrary(document.getElementById('productSearch')?.value || '');
+            }, 500);
+          }
+        }, 300);
+      }, 800);
+    } else {
+      console.error('Element not found:', `suggestion-${index}`);
+      alert('Error: Could not find suggestion element on page');
+    }
+
+    // Refresh product library immediately so changes show if modal is closed
+    console.log('Refreshing product library...');
+    renderProductLibrary(document.getElementById('productSearch')?.value || '');
+    console.log('=== APPLY SUGGESTION END ===');
+
+  } catch (error) {
+    console.error('ERROR in applySuggestion:', error);
+    alert('Error applying suggestion: ' + error.message);
   }
-
-  // Refresh product library immediately so changes show if modal is closed
-  renderProductLibrary(document.getElementById('productSearch')?.value || '');
 }
 
 // Ignore a suggestion
