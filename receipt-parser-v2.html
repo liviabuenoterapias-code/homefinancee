@@ -2920,8 +2920,36 @@ function clearIgnoredSuggestions() {
   }
 
   localStorage.removeItem('ignoredQualitySuggestions');
+  localStorage.removeItem('allowedSectionCombinations');
   showMessage('All ignored suggestions cleared', 'success');
   console.log('Cleared all ignored suggestions');
+}
+
+// Load allowed section combinations (pattern learning)
+function loadAllowedSectionCombinations() {
+  const saved = localStorage.getItem('allowedSectionCombinations');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save allowed section combinations
+function saveAllowedSectionCombinations(allowed) {
+  localStorage.setItem('allowedSectionCombinations', JSON.stringify(allowed));
+}
+
+// Add an allowed productType + storeSection combination (pattern learning)
+function allowSectionCombination(productType, storeSection) {
+  const key = `${productType}_${storeSection}`;
+  const allowed = loadAllowedSectionCombinations();
+  allowed[key] = true;
+  saveAllowedSectionCombinations(allowed);
+  console.log(`✓ Learned pattern: "${productType}" in "${storeSection}" is OK`);
+}
+
+// Check if a productType + storeSection combination is allowed
+function isSectionCombinationAllowed(productType, storeSection) {
+  const key = `${productType}_${storeSection}`;
+  const allowed = loadAllowedSectionCombinations();
+  return allowed[key] === true;
 }
 
 // Main scanner function
@@ -3123,12 +3151,20 @@ function detectStoreSectionMismatch(product) {
 
   const expectedSection = mapProductTypeToStoreSection(product.productType);
   if (expectedSection !== product.storeSection) {
+    // Check if user has already confirmed this combination is OK (pattern learning)
+    if (isSectionCombinationAllowed(product.productType, product.storeSection)) {
+      // User previously said this is fine - don't suggest
+      return null;
+    }
+
     const expectedName = STORE_CATEGORIES.find(c => c.id === expectedSection)?.name || expectedSection;
     const currentName = STORE_CATEGORIES.find(c => c.id === product.storeSection)?.name || product.storeSection;
 
     return {
       type: 'section_mismatch',
       rawName: product.rawName,
+      productType: product.productType,  // Store for pattern learning
+      storeSection: product.storeSection,  // Store for pattern learning
       current: { storeSection: product.storeSection },
       suggested: { storeSection: expectedSection },
       reason: `Product Type "${product.productType}" usually maps to "${expectedName}", but it's in "${currentName}"`,
@@ -3453,7 +3489,13 @@ function ignoreSuggestion(index) {
   console.log(`Saving as ignored: ${sug.rawName} - ${sug.type}`);
   addIgnoredSuggestion(sug.rawName, sug.type);
 
-  showMessage(`Ignored suggestion for "${sug.rawName}"`, 'info');
+  // PATTERN LEARNING: If this is a section_mismatch, learn the pattern
+  if (sug.type === 'section_mismatch' && sug.productType && sug.storeSection) {
+    allowSectionCombination(sug.productType, sug.storeSection);
+    showMessage(`✓ Learned: "${sug.productType}" in "${sug.storeSection}" is OK`, 'success');
+  } else {
+    showMessage(`Ignored suggestion for "${sug.rawName}"`, 'info');
+  }
 
   const element = document.getElementById(`suggestion-${index}`);
   if (element) {
