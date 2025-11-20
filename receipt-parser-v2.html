@@ -3540,36 +3540,19 @@ function detectBrandCapitalizationIssues(product) {
   if (!product.brand || product.brand.length === 0) return null;
 
   const brand = product.brand;
+  const lower = brand.toLowerCase();
 
-  // Check if brand is all lowercase (brands should be uppercase/titlecase)
-  const isAllLowercase = brand === brand.toLowerCase();
+  // Check if brand is NOT lowercase (brands should be lowercase for consistency)
+  const hasUpperCase = brand !== lower;
 
-  if (isAllLowercase) {
-    const upperBrand = brand.toUpperCase();
+  if (hasUpperCase) {
     return {
       type: 'brand_capitalization',
       rawName: product.rawName,
       current: { brand: product.brand },
-      suggested: { brand: upperBrand },
-      reason: 'Brand names should be uppercase for consistency (e.g., "ARLA", "VALIO", "ZETA").',
+      suggested: { brand: lower },
+      reason: 'Brand names should be lowercase for consistency (e.g., "arla", "valio", "zeta").',
       confidence: 'medium'
-    };
-  }
-
-  // Check for mixed case that isn't title case (e.g., "PrEstOst" or "aRLA")
-  const hasMixedCase = brand !== brand.toUpperCase() &&
-                       brand !== brand.toLowerCase() &&
-                       brand !== brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
-
-  if (hasMixedCase) {
-    const upperBrand = brand.toUpperCase();
-    return {
-      type: 'brand_capitalization',
-      rawName: product.rawName,
-      current: { brand: product.brand },
-      suggested: { brand: upperBrand },
-      reason: 'Brand has inconsistent capitalization. Standardize to uppercase for consistency.',
-      confidence: 'high'
     };
   }
 
