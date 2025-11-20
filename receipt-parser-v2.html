@@ -3528,7 +3528,7 @@ function detectCapitalizationIssues(product) {
       current: { productName: product.productName },
       suggested: { productName: lower },
       reason: 'Product names should be lowercase for consistency (easier to search and group). Brands are stored separately.',
-      confidence: 'medium'
+      confidence: 'high'
     };
   }
 
@@ -3552,7 +3552,7 @@ function detectBrandCapitalizationIssues(product) {
       current: { brand: product.brand },
       suggested: { brand: lower },
       reason: 'Brand names should be lowercase for consistency (e.g., "arla", "valio", "zeta").',
-      confidence: 'medium'
+      confidence: 'high'
     };
   }
 
@@ -3856,21 +3856,45 @@ function editSuggestion(rawName, index) {
 
 // Apply all high confidence suggestions
 function applyAllHighConfidence() {
-  if (!confirm('Apply all high confidence suggestions?\n\nThis will update multiple products at once.')) {
+  const highSuggestions = currentQualitySuggestions.filter(s => s.confidence === 'high');
+
+  if (highSuggestions.length === 0) {
+    alert('No high confidence suggestions to apply');
     return;
   }
 
+  if (!confirm(`Apply all ${highSuggestions.length} high confidence suggestions?\n\nThis will update multiple products at once.`)) {
+    return;
+  }
+
+  console.log('=== APPLY ALL HIGH CONFIDENCE ===');
   let appliedCount = 0;
   const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
 
   currentQualitySuggestions.forEach((sug, index) => {
     if (sug.confidence === 'high') {
+      console.log('Applying:', sug.rawName);
+
       if (!customMappings[sug.rawName]) {
-        customMappings[sug.rawName] = {};
+        // Initialize with full product data from library
+        const product = productLibrary.find(p => p.rawName === sug.rawName);
+        if (product) {
+          customMappings[sug.rawName] = {
+            productName: product.productName,
+            brand: product.brand,
+            productType: product.productType,
+            storeSection: product.storeSection
+          };
+        } else {
+          customMappings[sug.rawName] = {};
+        }
       }
 
+      // Apply all suggested fields
       Object.keys(sug.suggested).forEach(field => {
         customMappings[sug.rawName][field] = sug.suggested[field];
+        console.log(`  ${field}: ${sug.suggested[field]}`);
       });
 
       appliedCount++;
@@ -3885,6 +3909,7 @@ function applyAllHighConfidence() {
   });
 
   saveCustomMappings(customMappings);
+  console.log(`✓ Applied ${appliedCount} suggestions`);
   renderProductLibrary(document.getElementById('productSearch')?.value || '');
 
   setTimeout(() => {
@@ -3900,7 +3925,7 @@ function applyAllHighConfidence() {
       closeModal();
     }
 
-    showMessage(`Applied ${appliedCount} high confidence suggestions`, 'success');
+    showMessage(`✓ Applied ${appliedCount} high confidence suggestions!`, 'success');
   }, 1000);
 }
 
