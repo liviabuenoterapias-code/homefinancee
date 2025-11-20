@@ -2435,10 +2435,13 @@ function renderProductLibrary(searchFilter = '') {
   const filteredProducts = searchFilter
     ? products.filter(p => {
         const tags = getProductTagsByRawName(p.rawName);
-        return p.rawName.toLowerCase().includes(searchFilter.toLowerCase()) ||
-               p.standardName.toLowerCase().includes(searchFilter.toLowerCase()) ||
-               p.category.toLowerCase().includes(searchFilter.toLowerCase()) ||
-               tags.some(tag => tag.includes(searchFilter.toLowerCase()));
+        const search = searchFilter.toLowerCase();
+        return p.rawName.toLowerCase().includes(search) ||
+               (p.productName && p.productName.toLowerCase().includes(search)) ||
+               (p.brand && p.brand.toLowerCase().includes(search)) ||
+               (p.productType && p.productType.toLowerCase().includes(search)) ||
+               (p.storeSection && p.storeSection.toLowerCase().includes(search)) ||
+               tags.some(tag => tag.toLowerCase().includes(search));
       })
     : products;
 
@@ -2472,60 +2475,76 @@ function renderProductLibrary(searchFilter = '') {
       <table class="product-table">
         <thead>
           <tr>
-            <th style="width: 20%;">Original Name</th>
-            <th style="width: 25%;">Standardized Name</th>
-            <th style="width: 15%;">Shopping List Name</th>
-            <th style="width: 15%;">Category</th>
-            <th style="width: 15%;">Tags</th>
-            <th style="width: 10%;">Purchases</th>
+            <th style="width: 20%;">Receipt Name</th>
+            <th style="width: 15%;">Product Name</th>
+            <th style="width: 10%;">Brand</th>
+            <th style="width: 14%;">Product Type</th>
+            <th style="width: 13%;">Store Section</th>
+            <th style="width: 18%;">Tags</th>
+            <th style="width: 10%;">Count</th>
           </tr>
         </thead>
         <tbody>
           ${filteredProducts.map(p => {
             const productTags = getProductTagsByRawName(p.rawName);
+            const storeSectionName = STORE_CATEGORIES.find(c => c.id === p.storeSection)?.name || p.storeSection;
             return `
             <tr>
               <td>
-                <div style="font-family: monospace; color: #555;">${p.rawName}</div>
+                <div style="font-family: monospace; color: #555; font-size: 12px;">${p.rawName}</div>
                 <div style="font-size: 11px; color: #999; margin-top: 2px;">Last: ${p.lastSeen}</div>
               </td>
               <td>
                 <input
                   type="text"
-                  value="${p.standardName}"
+                  value="${p.productName || ''}"
                   data-raw="${p.rawName}"
-                  data-field="standardName"
+                  data-field="productName"
                   onchange="updateProductMapping(this)"
-                  placeholder="Enter product name..."
-                />
-                ${p.isCustom ? '<span class="edit-indicator">✓ Custom</span>' : ''}
-              </td>
-              <td>
-                <input
-                  type="text"
-                  value="${p.shoppingListName || ''}"
-                  data-raw="${p.rawName}"
-                  data-field="shoppingListName"
-                  onchange="updateProductMapping(this)"
-                  placeholder="Generic name..."
+                  placeholder="Product..."
                   style="font-weight: 500; color: #667eea;"
                 />
+                ${p.isCustom ? '<span class="edit-indicator">✓</span>' : ''}
               </td>
               <td>
                 <input
                   type="text"
-                  list="categories-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
-                  value="${p.category}"
+                  value="${p.brand || ''}"
                   data-raw="${p.rawName}"
-                  data-field="category"
+                  data-field="brand"
                   onchange="updateProductMapping(this)"
-                  placeholder="Select or type category..."
+                  placeholder="Brand..."
+                  style="font-size: 13px;"
                 />
-                <datalist id="categories-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
-                  ${categories.map(cat => `
-                    <option value="${cat}">${cat}</option>
-                  `).join('')}
+              </td>
+              <td>
+                <input
+                  type="text"
+                  list="product-types-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  value="${p.productType || ''}"
+                  data-raw="${p.rawName}"
+                  data-field="productType"
+                  onchange="updateProductMapping(this)"
+                  placeholder="Type..."
+                  style="font-size: 13px;"
+                />
+                <datalist id="product-types-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
+                  ${categories.map(cat => `<option value="${cat}">`).join('')}
                 </datalist>
+              </td>
+              <td>
+                <select
+                  data-raw="${p.rawName}"
+                  data-field="storeSection"
+                  onchange="updateProductMapping(this)"
+                  style="font-size: 13px; width: 100%;"
+                >
+                  ${STORE_CATEGORIES.map(cat => `
+                    <option value="${cat.id}" ${p.storeSection === cat.id ? 'selected' : ''}>
+                      ${cat.icon} ${cat.name}
+                    </option>
+                  `).join('')}
+                </select>
               </td>
               <td>
                 <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px;">
@@ -2566,7 +2585,7 @@ function updateProductMapping(element) {
   const field = element.getAttribute('data-field');
   const value = element.value.trim();
 
-  if (!value) {
+  if (!value && field !== 'brand') {
     alert('Value cannot be empty');
     renderProductLibrary();
     return;
@@ -2575,17 +2594,25 @@ function updateProductMapping(element) {
   const customMappings = loadCustomMappings();
 
   if (!customMappings[rawName]) {
+    // Initialize with new structure
+    const brand = extractBrand(rawName);
+    const tempProductName = cleanProductName(rawName, brand);
+    const productName = suggestShoppingListName(tempProductName);
+    const productType = window.ProductCategories.getCategory(productName);
+
     customMappings[rawName] = {
-      standardName: window.ProductCategories.standardizeProduct(rawName),
-      category: window.ProductCategories.getCategory(window.ProductCategories.standardizeProduct(rawName))
+      productName: productName,
+      brand: brand,
+      productType: productType,
+      storeSection: mapProductTypeToStoreSection(productType)
     };
   }
 
   customMappings[rawName][field] = value;
   saveCustomMappings(customMappings);
 
-  // If this is a category field and it's a new category, add it to custom categories
-  if (field === 'category') {
+  // If this is a productType field and it's a new category, add it to custom categories
+  if (field === 'productType') {
     const allCategories = getAllCategories();
     if (!allCategories.includes(value)) {
       const customCategories = loadCustomCategories();
@@ -3586,29 +3613,31 @@ function generateSuggestions() {
   const customMappings = loadCustomMappings();
   const suggestions = [];
 
-  // Group products by shopping list name
+  // Group products by product name
   const groupedProducts = {};
 
   productLibrary.forEach(product => {
-    const shoppingListName = product.shoppingListName || product.standardName;
+    const productName = product.productName;
 
-    if (!groupedProducts[shoppingListName]) {
-      groupedProducts[shoppingListName] = {
-        name: shoppingListName,
-        category: product.category,
+    if (!groupedProducts[productName]) {
+      groupedProducts[productName] = {
+        name: productName,
+        brand: product.brand,
+        productType: product.productType,
+        storeSection: product.storeSection,
         purchases: [],
         totalSpent: 0,
         lastSeen: product.lastSeen
       };
     }
 
-    groupedProducts[shoppingListName].purchases.push({
+    groupedProducts[productName].purchases.push({
       date: new Date(product.lastSeen),
       count: product.count,
       spent: product.totalSpent
     });
 
-    groupedProducts[shoppingListName].totalSpent += product.totalSpent;
+    groupedProducts[productName].totalSpent += product.totalSpent;
   });
 
   // Calculate frequency and create suggestions
@@ -3642,7 +3671,9 @@ function generateSuggestions() {
     if (isOverdue || purchaseCount >= 3) {
       suggestions.push({
         name: group.name,
-        category: group.category,
+        brand: group.brand,
+        productType: group.productType,
+        storeSection: group.storeSection,
         avgPrice: avgPrice,
         daysSince: daysSince,
         avgDaysBetween: avgDaysBetween,
@@ -3695,7 +3726,7 @@ function renderSuggestions(suggestions) {
               ~${sug.avgPrice.toFixed(2)} kr
             </div>
           </div>
-          <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.category}', ${sug.avgPrice})" style="margin: 0;">
+          <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.avgPrice})" style="margin: 0;">
             + Add
           </button>
         </div>
@@ -3707,7 +3738,7 @@ function renderSuggestions(suggestions) {
 }
 
 // Add suggestion to shopping list
-function addSuggestionToList(name, category, estimatedPrice) {
+function addSuggestionToList(name, storeSection, estimatedPrice) {
   const list = loadShoppingList();
 
   // Check if already in list
@@ -3719,7 +3750,7 @@ function addSuggestionToList(name, category, estimatedPrice) {
   const newItem = {
     id: Date.now().toString(),
     name: name,
-    category: mapCategoryToStore(category),
+    category: storeSection,  // Using 'category' field for backward compatibility, but it's actually storeSection
     checked: false,
     estimatedPrice: estimatedPrice,
     isRecurrent: true,
