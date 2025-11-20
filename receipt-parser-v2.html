@@ -1045,7 +1045,7 @@ function showProductsByTag(tag) {
         <thead>
           <tr>
             <th>Product</th>
-            <th>Category</th>
+            <th>Product Type</th>
             <th>Total Qty</th>
             <th>Total Spent</th>
             <th>Purchases</th>
@@ -1396,7 +1396,7 @@ function renderStaples() {
           <thead>
             <tr>
               <th class="sortable" onclick="sortStaples('name')">Product${sortIndicator('name')}</th>
-              <th class="sortable" onclick="sortStaples('category')">Category${sortIndicator('category')}</th>
+              <th class="sortable" onclick="sortStaples('category')">Product Type${sortIndicator('category')}</th>
               <th class="sortable" onclick="sortStaples('frequency')">Frequency${sortIndicator('frequency')}</th>
               <th class="sortable" onclick="sortStaples('totalQuantity')">Total Units${sortIndicator('totalQuantity')}</th>
               <th class="sortable" onclick="sortStaples('totalSpent')">Total Spent${sortIndicator('totalSpent')}</th>
@@ -1440,7 +1440,7 @@ function renderCategories() {
   const html = `
     <div class="analysis-section">
       <div class="section-header" onclick="toggleSection('categories-content')">
-        <span class="section-title">📊 Category Spending</span>
+        <span class="section-title">📊 Product Type Spending</span>
         <span style="font-size: 20px;">▼</span>
       </div>
       <div id="categories-content" class="section-content">
@@ -1451,7 +1451,7 @@ function renderCategories() {
         <table class="analysis-table" style="margin-top: 20px;">
           <thead>
             <tr>
-              <th>Category</th>
+              <th>Product Type</th>
               <th>Total Spent</th>
               <th>Percentage</th>
               <th>Items</th>
@@ -1656,7 +1656,7 @@ function showProductDetail(productName) {
     ` : ''}
     <h2>${productName}</h2>
     <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
-      <span style="color: #666;">Category:</span>
+      <span style="color: #666;">Product Type:</span>
       <select
         id="product-category-select"
         onchange="updateProductCategory('${productName.replace(/'/g, "\\'")}', this.value)"
@@ -1921,36 +1921,52 @@ function showProductDetailFromTag(productName, tag) {
 }
 
 // Update product category from analysis tab
-function updateProductCategory(standardName, newCategory) {
+function updateProductCategory(productName, newCategory) {
+  console.log('=== UPDATE PRODUCT CATEGORY (from Analysis) ===');
+  console.log('Product Name:', productName);
+  console.log('New Category:', newCategory);
+
   const customMappings = loadCustomMappings();
 
-  // Find all raw product names that map to this standardized name
+  // Find all raw product names that map to this product name
   const productLibrary = buildProductLibrary();
-  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+  const matchingProducts = productLibrary.filter(p => p.productName === productName);
+
+  console.log('Found', matchingProducts.length, 'matching products to update');
 
   // Update custom mapping for each raw name
   matchingProducts.forEach(product => {
     const rawName = product.rawName;
+    console.log('Updating raw name:', rawName);
+
     if (!customMappings[rawName]) {
+      // Initialize with new data structure
       customMappings[rawName] = {
-        standardName: product.standardName,
-        category: newCategory,
+        productName: product.productName,
+        brand: product.brand,
+        productType: newCategory,  // ✅ FIXED: Use productType instead of category
+        storeSection: mapProductTypeToStoreSection(newCategory),
         tags: []
       };
+      console.log('Initialized new mapping for', rawName);
     } else {
-      customMappings[rawName].category = newCategory;
+      customMappings[rawName].productType = newCategory;  // ✅ FIXED: Use productType instead of category
+      // Also update storeSection to match new category
+      customMappings[rawName].storeSection = mapProductTypeToStoreSection(newCategory);
+      console.log('Updated existing mapping for', rawName);
     }
   });
 
   // Save and refresh
   saveCustomMappings(customMappings);
+  console.log('✓ Category update complete');
 
   // Preserve navigation context before closing
   const savedContext = modalNavigationContext;
   closeModal();
   setTimeout(() => {
     modalNavigationContext = savedContext;
-    showProductDetail(standardName);
+    showProductDetail(productName);
   }, 100);
 }
 
