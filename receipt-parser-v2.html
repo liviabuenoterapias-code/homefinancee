@@ -2525,29 +2525,17 @@ function mapProductTypeToStoreSection(productType) {
 // Get all unique categories
 function getAllCategories() {
   const defaultCategories = [
-    'Dairy',
-    'Dairy - Cheese',
-    'Dairy - Butter',
-    'Dairy - Eggs',
-    'Dairy - Yogurt',
-    'Bread & Bakery',
-    'Meat & Proteins',
-    'Beverages',
-    'Alcoholic Beverages',
-    'Produce',
-    'Frozen Foods',
-    'Pantry - Pasta',
-    'Pantry - Grains',
-    'Pantry - Sauces',
-    'Pantry - Spices',
-    'Condiments & Spreads',
-    'Prepared Foods',
-    'Breakfast & Cereals',
-    'Snacks',
-    'Household',
-    'Personal Care',
-    'Pet Food',
-    'Other'
+    'frukost',
+    'lunch',
+    'middag',
+    'mellanmål',
+    'snacks',
+    'godis',
+    'dryck',
+    'hälsa',
+    'städning',
+    'katmat',
+    'övrigt'
   ];
 
   // Load deleted and renamed categories
@@ -2627,12 +2615,8 @@ function deleteCustomCategory(categoryName) {
 
   // Check if it's a default category
   const defaultCategories = [
-    'Dairy', 'Dairy - Cheese', 'Dairy - Butter', 'Dairy - Eggs', 'Dairy - Yogurt',
-    'Bread & Bakery', 'Meat & Proteins', 'Beverages', 'Alcoholic Beverages',
-    'Produce', 'Frozen Foods', 'Pantry - Pasta', 'Pantry - Grains',
-    'Pantry - Sauces', 'Pantry - Spices', 'Condiments & Spreads',
-    'Prepared Foods', 'Breakfast & Cereals', 'Snacks', 'Household',
-    'Personal Care', 'Pet Food', 'Other'
+    'frukost', 'lunch', 'middag', 'mellanmål', 'snacks', 'godis',
+    'dryck', 'hälsa', 'städning', 'katmat', 'övrigt'
   ];
 
   if (defaultCategories.includes(categoryName)) {
@@ -2932,6 +2916,21 @@ function showCategoryManager() {
     <h2>📁 Product Type Management</h2>
     <p style="color: #666; margin-bottom: 20px;">Edit or delete any product type. Changes will update all products using that type.</p>
 
+    <!-- Clear All Assignments Button -->
+    <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;">
+      <h3 style="margin-top: 0; color: #856404;">⚠️ Clear All Product Type Assignments</h3>
+      <p style="color: #856404; margin-bottom: 10px;">
+        This will remove ALL product type assignments from all products. You'll need to reassign each product to your new types.
+      </p>
+      <button
+        class="reset-btn"
+        onclick="clearAllProductTypes()"
+        style="background: #dc3545; color: white; font-weight: bold;"
+      >
+        🗑️ Clear All Product Types
+      </button>
+    </div>
+
     <div style="margin: 20px 0;">
       <h3>All Product Types (${allCategories.length})</h3>
       <div style="margin-top: 10px; max-height: 500px; overflow-y: auto;">
@@ -2960,6 +2959,40 @@ function showCategoryManager() {
 
   modal.style.display = 'block';
   overlay.style.display = 'block';
+}
+
+// Clear all product type assignments
+function clearAllProductTypes() {
+  if (!confirm('⚠️ WARNING: This will remove ALL product type assignments from ALL products!\n\nYou will need to manually reassign each product to your new types.\n\nAre you sure you want to continue?')) {
+    return;
+  }
+
+  console.log('=== CLEARING ALL PRODUCT TYPES ===');
+  const customMappings = loadCustomMappings();
+  let clearedCount = 0;
+
+  Object.keys(customMappings).forEach(rawName => {
+    if (customMappings[rawName].productType) {
+      delete customMappings[rawName].productType;
+      // Also clear storeSection since it depends on productType
+      delete customMappings[rawName].storeSection;
+      clearedCount++;
+      console.log('Cleared:', rawName);
+    }
+  });
+
+  if (clearedCount === 0) {
+    alert('No product types to clear');
+    return;
+  }
+
+  saveCustomMappings(customMappings);
+  console.log(`✓ Cleared ${clearedCount} product type assignments`);
+
+  alert(`✅ Cleared product types from ${clearedCount} products!\n\nGo to Product Library to reassign them to your new types.`);
+
+  closeModal();
+  renderProductLibrary(document.getElementById('productSearch')?.value || '');
 }
 
 // Export custom data to JSON file
@@ -3971,12 +4004,8 @@ function renameCategory(oldName, newName) {
 
   // Check if it's a default category
   const defaultCategories = [
-    'Dairy', 'Dairy - Cheese', 'Dairy - Butter', 'Dairy - Eggs', 'Dairy - Yogurt',
-    'Bread & Bakery', 'Meat & Proteins', 'Beverages', 'Alcoholic Beverages',
-    'Produce', 'Frozen Foods', 'Pantry - Pasta', 'Pantry - Grains',
-    'Pantry - Sauces', 'Pantry - Spices', 'Condiments & Spreads',
-    'Prepared Foods', 'Breakfast & Cereals', 'Snacks', 'Household',
-    'Personal Care', 'Pet Food', 'Other'
+    'frukost', 'lunch', 'middag', 'mellanmål', 'snacks', 'godis',
+    'dryck', 'hälsa', 'städning', 'katmat', 'övrigt'
   ];
 
   if (defaultCategories.includes(oldName)) {
