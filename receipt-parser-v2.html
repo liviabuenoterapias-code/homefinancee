@@ -3009,8 +3009,10 @@ function handleRenameTag(oldTag) {
 // Store current promotions
 let currentPromotions = [];
 
-// Event listener for reklamblad upload
-document.getElementById('reklamInput').addEventListener('change', async (e) => {
+// Event listener for reklamblad upload (only if element exists)
+const reklamInput = document.getElementById('reklamInput');
+if (reklamInput) {
+  reklamInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file || file.type !== 'application/pdf') {
     showReklamMessage('Please upload a PDF file', 'error');
@@ -3026,7 +3028,8 @@ document.getElementById('reklamInput').addEventListener('change', async (e) => {
     console.error('Error processing reklamblad:', error);
     showReklamMessage('Error processing flyer. Please try again.', 'error');
   }
-});
+  });
+}
 
 // Process reklamblad PDF
 async function processReklamblad(file) {
