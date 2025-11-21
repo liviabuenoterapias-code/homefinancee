@@ -2969,30 +2969,53 @@ function clearAllProductTypes() {
 
   console.log('=== CLEARING ALL PRODUCT TYPES ===');
   const customMappings = loadCustomMappings();
+  console.log('Total products in custom mappings:', Object.keys(customMappings).length);
+
   let clearedCount = 0;
+  let skippedCount = 0;
 
   Object.keys(customMappings).forEach(rawName => {
+    console.log(`Checking ${rawName}:`, customMappings[rawName]);
+
     if (customMappings[rawName].productType) {
+      console.log(`  - Has productType: "${customMappings[rawName].productType}" - CLEARING`);
       delete customMappings[rawName].productType;
       // Also clear storeSection since it depends on productType
-      delete customMappings[rawName].storeSection;
+      if (customMappings[rawName].storeSection) {
+        console.log(`  - Has storeSection: "${customMappings[rawName].storeSection}" - CLEARING`);
+        delete customMappings[rawName].storeSection;
+      }
       clearedCount++;
-      console.log('Cleared:', rawName);
+    } else {
+      console.log(`  - No productType found - SKIPPING`);
+      skippedCount++;
     }
   });
 
+  console.log(`Cleared: ${clearedCount}, Skipped: ${skippedCount}`);
+
   if (clearedCount === 0) {
-    alert('No product types to clear');
+    alert('No product types to clear.\n\nYour products may already have empty product types, or you may not have any custom mappings yet.');
+    console.log('⚠️ No product types were cleared');
     return;
   }
 
   saveCustomMappings(customMappings);
-  console.log(`✓ Cleared ${clearedCount} product type assignments`);
+  console.log('✓ Saved updated mappings to localStorage');
+
+  // Verify it was saved
+  const verifyMappings = loadCustomMappings();
+  const remainingTypes = Object.keys(verifyMappings).filter(k => verifyMappings[k].productType);
+  console.log('Verification - Products still with productType:', remainingTypes.length);
+  if (remainingTypes.length > 0) {
+    console.log('⚠️ WARNING: Some products still have productType:', remainingTypes);
+  }
 
   alert(`✅ Cleared product types from ${clearedCount} products!\n\nGo to Product Library to reassign them to your new types.`);
 
   closeModal();
   renderProductLibrary(document.getElementById('productSearch')?.value || '');
+  console.log('=== CLEAR COMPLETE ===');
 }
 
 // Export custom data to JSON file
