@@ -5554,85 +5554,111 @@ function removeManualItem(itemId) {
 
 // Save manual receipt
 function saveManualReceipt() {
-  const store = document.getElementById('manual-store').value.trim();
-  const date = document.getElementById('manual-date').value;
-  const time = document.getElementById('manual-time').value;
-  let receiptId = document.getElementById('manual-id').value.trim();
+  console.log('=== SAVING MANUAL RECEIPT ===');
 
-  if (!store || !date || !time) {
-    alert('Please fill in store name, date, and time');
-    return;
-  }
+  try {
+    const store = document.getElementById('manual-store').value.trim();
+    const date = document.getElementById('manual-date').value;
+    const time = document.getElementById('manual-time').value;
+    let receiptId = document.getElementById('manual-id').value.trim();
 
-  // Collect items
-  const items = [];
-  const itemDivs = document.querySelectorAll('[id^="manual-item-"]');
+    console.log('Store:', store, 'Date:', date, 'Time:', time);
 
-  itemDivs.forEach(itemDiv => {
-    const name = itemDiv.querySelector('.manual-item-name').value.trim();
-    const qty = parseFloat(itemDiv.querySelector('.manual-item-qty').value);
-    const unitPrice = parseFloat(itemDiv.querySelector('.manual-item-price').value);
-    const totalPrice = parseFloat(itemDiv.querySelector('.manual-item-total').value);
-    const discount = parseFloat(itemDiv.querySelector('.manual-item-discount').value);
-
-    if (name && qty > 0) {
-      items.push({
-        name: name,
-        quantity: qty,
-        unitPrice: unitPrice,
-        totalPrice: totalPrice,
-        discount: discount
-      });
+    if (!store || !date || !time) {
+      alert('Please fill in store name, date, and time');
+      return;
     }
-  });
 
-  if (items.length === 0) {
-    alert('Please add at least one item');
-    return;
+    // Collect items
+    const items = [];
+    const itemDivs = document.querySelectorAll('[id^="manual-item-"]');
+    console.log('Found', itemDivs.length, 'item divs');
+
+    itemDivs.forEach(itemDiv => {
+      const name = itemDiv.querySelector('.manual-item-name').value.trim();
+      const qty = parseFloat(itemDiv.querySelector('.manual-item-qty').value);
+      const unitPrice = parseFloat(itemDiv.querySelector('.manual-item-price').value);
+      const totalPrice = parseFloat(itemDiv.querySelector('.manual-item-total').value);
+      const discount = parseFloat(itemDiv.querySelector('.manual-item-discount').value);
+
+      console.log('Item:', name, 'Qty:', qty, 'Total:', totalPrice);
+
+      if (name && qty > 0) {
+        items.push({
+          name: name,
+          quantity: qty,
+          unitPrice: unitPrice,
+          totalPrice: totalPrice,
+          discount: discount
+        });
+      }
+    });
+
+    console.log('Collected', items.length, 'valid items');
+
+    if (items.length === 0) {
+      alert('Please add at least one item with a name and quantity > 0');
+      return;
+    }
+
+    // Generate receipt ID if not provided
+    if (!receiptId) {
+      receiptId = `MANUAL-${date.replace(/-/g, '')}-${time.replace(/:/g, '')}`;
+    }
+
+    // Calculate totals
+    const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
+    const totalDiscount = items.reduce((sum, item) => sum + item.discount, 0);
+
+    console.log('Totals - Amount:', totalAmount, 'Discount:', totalDiscount);
+
+    // Create receipt object
+    const receipt = {
+      id: receiptId,
+      store: store,
+      date: date,
+      time: time,
+      totalAmount: totalAmount,
+      totalDiscount: totalDiscount,
+      items: items,
+      source: 'manual' // Mark as manually entered
+    };
+
+    console.log('Created receipt object:', receipt);
+
+    // Add to allReceipts
+    if (!allReceipts) {
+      allReceipts = [];
+      console.log('Initialized empty allReceipts array');
+    }
+    allReceipts.push(receipt);
+    console.log('Added to allReceipts. Total receipts:', allReceipts.length);
+
+    // Save to localStorage
+    localStorage.setItem('allReceipts', JSON.stringify(allReceipts));
+    console.log('✓ Saved to localStorage');
+
+    // Close modal
+    closeModal();
+
+    // Clear the draft since we saved successfully
+    clearManualReceiptDraft();
+    console.log('✓ Cleared draft');
+
+    // Refresh display
+    console.log('Refreshing displays...');
+    displayReceipts();
+    updateStats();
+    refreshAnalysis();
+    console.log('✓ Displays refreshed');
+
+    showMessage(`✅ Manual receipt saved! ${items.length} items, ${totalAmount.toFixed(2)} kr total`, 'success');
+    console.log('=== SAVE COMPLETE ===');
+
+  } catch (error) {
+    console.error('ERROR saving manual receipt:', error);
+    alert('Error saving receipt: ' + error.message + '\n\nCheck console for details.');
   }
-
-  // Generate receipt ID if not provided
-  if (!receiptId) {
-    receiptId = `MANUAL-${date.replace(/-/g, '')}-${time.replace(/:/g, '')}`;
-  }
-
-  // Calculate totals
-  const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
-  const totalDiscount = items.reduce((sum, item) => sum + item.discount, 0);
-
-  // Create receipt object
-  const receipt = {
-    id: receiptId,
-    store: store,
-    date: date,
-    time: time,
-    totalAmount: totalAmount,
-    totalDiscount: totalDiscount,
-    items: items,
-    source: 'manual' // Mark as manually entered
-  };
-
-  // Add to allReceipts
-  if (!allReceipts) {
-    allReceipts = [];
-  }
-  allReceipts.push(receipt);
-
-  // Save to localStorage
-  localStorage.setItem('allReceipts', JSON.stringify(allReceipts));
-
-  // Close modal
-  closeModal();
-
-  // Clear the draft since we saved successfully
-  clearManualReceiptDraft();
-
-  // Refresh display
-  displayReceipts();
-  updateStats();
-  refreshAnalysis();
-
-  showMessage(`✅ Manual receipt saved! ${items.length} items, ${totalAmount.toFixed(2)} kr total`, 'success');
 }
 
 // Add manual item
