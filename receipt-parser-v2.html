@@ -2920,7 +2920,20 @@ function updateProductMapping(element) {
   }
 
   console.log('Refreshing Product Library...');
+
+  // Save scroll position before re-rendering
+  const libraryContent = document.getElementById('product-library-content');
+  const scrollPosition = libraryContent ? libraryContent.scrollTop : 0;
+
   renderProductLibrary(document.getElementById('productSearch').value);
+
+  // Restore scroll position after re-rendering
+  if (libraryContent) {
+    setTimeout(() => {
+      libraryContent.scrollTop = scrollPosition;
+    }, 0);
+  }
+
   console.log('=== UPDATE COMPLETE ===');
 }
 
