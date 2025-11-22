@@ -111,6 +111,13 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
     <input type="file" id="fileInput" accept=".pdf" multiple style="display:none;">
   </div>
 
+  <div style="text-align: center; margin: 20px 0;">
+    <button onclick="openManualEntryForm()" class="btn" style="background: #667eea; padding: 12px 24px; font-size: 15px;">
+      ✍️ Manual Receipt Entry
+    </button>
+    <p style="color: #666; font-size: 13px; margin-top: 8px;">Use this if PDF parsing fails or you have a paper receipt</p>
+  </div>
+
   <div id="statusMsg"></div>
   <div id="progress" style="display:none;">
     <p id="progressText" style="text-align: center; margin-bottom: 10px;">Processing receipts...</p>
@@ -974,42 +981,75 @@ function getAllTags() {
 
 // Show products with a specific tag
 function showProductsByTag(tag) {
-  const customMappings = loadCustomMappings();
-
-  // Find all products with this tag
-  const productNames = new Set();
-  Object.entries(customMappings).forEach(([rawName, mapping]) => {
-    if (mapping.tags && mapping.tags.includes(tag)) {
-      // Get the standardized name for this product
-      const standardName = mapping.standardName || window.ProductCategories.standardizeProduct(rawName);
-      productNames.add(standardName);
+  try {
+    if (!analysisInstance) {
+      alert('ERROR: Analysis data not loaded. Please go to Analysis tab first.');
+      return;
     }
-  });
 
-  if (productNames.size === 0) {
-    alert(`No products found with tag "${tag}"`);
+    const customMappings = loadCustomMappings();
+
+    // Find all products with this tag - use the SAME standardization method as analysis
+    const productStandardNames = new Set();
+    const debugInfo = {
+      totalTagged: 0,
+      foundInReceipts: 0,
+      notFoundInReceipts: []
+    };
+
+    Object.entries(customMappings).forEach(([rawName, mapping]) => {
+      if (mapping.tags && mapping.tags.includes(tag)) {
+        debugInfo.totalTagged++;
+
+        // Use the SAME standardization method that analysis uses
+        const standardName = window.ProductCategories.standardizeProduct(rawName);
+
+        // Check if this product exists in analysis data
+        const history = analysisInstance.getPriceHistory(standardName);
+        if (history) {
+          productStandardNames.add(standardName);
+          debugInfo.foundInReceipts++;
+        } else {
+          debugInfo.notFoundInReceipts.push({
+            rawName,
+            standardName,
+            productName: mapping.productName
+          });
+        }
+      }
+    });
+
+  if (productStandardNames.size === 0) {
+    const notFoundList = debugInfo.notFoundInReceipts.map(p => `  • ${p.rawName}`).join('\n');
+    alert(`No products found with tag "${tag}" in any receipts.\n\n${debugInfo.totalTagged} products are tagged with "${tag}", but none appear in uploaded receipts.\n\nTagged products:\n${notFoundList}\n\nThese products may have been tagged but never purchased, or the receipts containing them haven't been uploaded.`);
     return;
   }
 
   // Get purchase data for these products
   const productsData = [];
-  productNames.forEach(productName => {
-    const history = analysisInstance.getPriceHistory(productName);
+  productStandardNames.forEach(standardName => {
+    console.log('Getting price history for:', standardName);
+    const history = analysisInstance.getPriceHistory(standardName);
+    console.log('  -> History:', history);
     if (history) {
       const totalQuantity = history.purchases.reduce((sum, p) => sum + p.quantity, 0);
       const totalSpent = history.purchases.reduce((sum, p) => sum + p.totalPrice, 0);
       const totalDiscount = history.purchases.reduce((sum, p) => sum + p.discount, 0);
 
       productsData.push({
-        name: productName,
+        name: standardName,
         category: history.category,
         totalQuantity,
         totalSpent,
         totalDiscount,
         purchases: history.purchases.length
       });
+    } else {
+      console.log('  -> No history found!');
     }
   });
+
+  console.log('Final productsData:', productsData);
 
   // Sort by total spent
   productsData.sort((a, b) => b.totalSpent - a.totalSpent);
@@ -1075,6 +1115,10 @@ function showProductsByTag(tag) {
 
   modal.style.display = 'block';
   overlay.style.display = 'block';
+  } catch (error) {
+    alert('ERROR in showProductsByTag: ' + error.message);
+    console.error('Error in showProductsByTag:', error);
+  }
 }
 
 // Render tag filter section
@@ -1101,19 +1145,13 @@ function renderTagFilter() {
             placeholder="Type to search tags..."
             autocomplete="off"
             style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
-            onfocus="showTagDropdown()"
-            oninput="filterTagDropdown()"
-            onblur="setTimeout(() => hideTagDropdown(), 200)"
           />
           <div id="tagDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #667eea; border-top: none; border-radius: 0 0 6px 6px; max-height: 300px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
             ${tags.map(tag => `
               <div
                 class="tag-dropdown-item"
-                data-tag="${tag}"
-                onclick="selectTagFromDropdown('${tag}')"
-                style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; transition: background 0.2s;"
-                onmouseover="this.style.background='#f5f7ff'"
-                onmouseout="this.style.background='white'"
+                data-tag="${tag.replace(/"/g, '&quot;')}"
+                style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0;"
               >
                 ${tag}
               </div>
@@ -1125,58 +1163,65 @@ function renderTagFilter() {
   `;
 
   document.getElementById('tag-filter-section').innerHTML = html;
-}
 
-// Show tag dropdown
-function showTagDropdown() {
-  const dropdown = document.getElementById('tagDropdown');
-  if (dropdown) {
-    dropdown.style.display = 'block';
-  }
-}
-
-// Hide tag dropdown
-function hideTagDropdown() {
-  const dropdown = document.getElementById('tagDropdown');
-  if (dropdown) {
-    dropdown.style.display = 'none';
-  }
-}
-
-// Filter tag dropdown based on search input
-function filterTagDropdown() {
+  // Attach event listeners after HTML is created
   const searchInput = document.getElementById('tagFilterSearch');
   const dropdown = document.getElementById('tagDropdown');
 
-  if (!searchInput || !dropdown) return;
+  if (searchInput && dropdown) {
+    // Show dropdown on focus
+    searchInput.addEventListener('focus', () => {
+      dropdown.style.display = 'block';
+    });
 
-  const searchTerm = searchInput.value.toLowerCase();
-  const items = dropdown.querySelectorAll('.tag-dropdown-item');
+    // Filter tags as user types
+    searchInput.addEventListener('input', () => {
+      const searchTerm = searchInput.value.toLowerCase();
+      const items = dropdown.querySelectorAll('.tag-dropdown-item');
 
-  let visibleCount = 0;
-  items.forEach(item => {
-    const tag = item.getAttribute('data-tag').toLowerCase();
-    if (tag.includes(searchTerm)) {
-      item.style.display = 'block';
-      visibleCount++;
-    } else {
-      item.style.display = 'none';
-    }
-  });
+      let visibleCount = 0;
+      items.forEach(item => {
+        const tag = item.getAttribute('data-tag').toLowerCase();
+        if (tag.includes(searchTerm)) {
+          item.style.display = 'block';
+          visibleCount++;
+        } else {
+          item.style.display = 'none';
+        }
+      });
 
-  // Show dropdown if there are visible items
-  dropdown.style.display = visibleCount > 0 ? 'block' : 'none';
-}
+      dropdown.style.display = visibleCount > 0 ? 'block' : 'none';
+    });
 
-// Select a tag from dropdown
-function selectTagFromDropdown(tag) {
-  const searchInput = document.getElementById('tagFilterSearch');
-  if (searchInput) {
-    searchInput.value = tag;
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.style.display = 'none';
+      }
+    });
+
+    // Handle tag selection
+    dropdown.querySelectorAll('.tag-dropdown-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent blur
+        const tag = item.getAttribute('data-tag');
+        searchInput.value = tag;
+        dropdown.style.display = 'none';
+        showProductsByTag(tag);
+      });
+
+      // Hover effects
+      item.addEventListener('mouseover', () => {
+        item.style.background = '#f5f7ff';
+      });
+      item.addEventListener('mouseout', () => {
+        item.style.background = 'white';
+      });
+    });
   }
-  hideTagDropdown();
-  showProductsByTag(tag);
 }
+
+// Old dropdown functions removed - replaced with working dropdown below
 
 function renderTrends() {
   // Get monthly spending data
@@ -1953,10 +1998,9 @@ function updateProductCategory(productName, newCategory) {
       };
       console.log('Initialized new mapping for', rawName);
     } else {
-      customMappings[rawName].productType = newCategory;  // ✅ FIXED: Use productType instead of category
-      // Also update storeSection to match new category
-      customMappings[rawName].storeSection = mapProductTypeToStoreSection(newCategory);
-      console.log('Updated existing mapping for', rawName);
+      customMappings[rawName].productType = newCategory;
+      // DON'T auto-update storeSection - user controls this manually
+      console.log('Updated existing mapping for', rawName, '(storeSection preserved)');
     }
   });
 
@@ -2465,11 +2509,15 @@ function buildProductLibrary() {
         const productType = customData?.productType || customData?.category ||
                            window.ProductCategories.getCategory(productName);
 
-        // Get store section (from custom or map from product type)
-        const storeSection = customData?.storeSection || mapProductTypeToStoreSection(productType);
+        // Get store section - ONLY use saved value if it exists, otherwise calculate
+        // Use 'in' operator to check if property exists (not just truthy)
+        const storeSection = customData && 'storeSection' in customData
+                           ? customData.storeSection
+                           : mapProductTypeToStoreSection(productType);
 
         productMap.set(rawName, {
           rawName: rawName,
+          standardName: window.ProductCategories.standardizeProduct(rawName),
           productName: productName,
           brand: brand,
           productType: productType,
@@ -2826,7 +2874,10 @@ function updateProductMapping(element) {
   console.log('Current custom mappings for this product:', customMappings[rawName]);
 
   if (!customMappings[rawName]) {
-    // Initialize with new structure
+    // Initialize with new structure - get current UI values
+    const row = element.closest('tr');
+    const storeSectionSelect = row.querySelector('select[data-field="storeSection"]');
+
     const brand = extractBrand(rawName);
     const tempProductName = cleanProductName(rawName, brand);
     const productName = suggestShoppingListName(tempProductName);
@@ -2836,9 +2887,19 @@ function updateProductMapping(element) {
       productName: productName,
       brand: brand,
       productType: productType,
-      storeSection: mapProductTypeToStoreSection(productType)
+      storeSection: storeSectionSelect ? storeSectionSelect.value : mapProductTypeToStoreSection(productType)
     };
     console.log('Initialized new mapping:', customMappings[rawName]);
+  }
+
+  // ALWAYS preserve the current storeSection from UI when changing ANY field
+  // This ensures user's manual store section choice is never lost
+  const row = element.closest('tr');
+  const storeSectionSelect = row.querySelector('select[data-field="storeSection"]');
+  if (storeSectionSelect && field !== 'storeSection') {
+    // Save current storeSection value before making any changes
+    customMappings[rawName].storeSection = storeSectionSelect.value;
+    console.log('✓ Preserved current storeSection:', storeSectionSelect.value);
   }
 
   customMappings[rawName][field] = value;
@@ -2863,7 +2924,7 @@ function updateProductMapping(element) {
   console.log('=== UPDATE COMPLETE ===');
 }
 
-// Add search handler
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
   // Run data migration on page load
   console.log('Checking for old data structure...');
@@ -2873,11 +2934,18 @@ document.addEventListener('DOMContentLoaded', () => {
     showMessage('Data structure updated! Refresh the page to see changes.', 'success');
   }
 
+  // Setup product search handler
   const searchInput = document.getElementById('productSearch');
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       renderProductLibrary(e.target.value);
     });
+  }
+
+  // Render shopping list if there are items
+  const list = loadShoppingList();
+  if (list.length > 0) {
+    renderShoppingList();
   }
 });
 
@@ -3209,11 +3277,11 @@ function scanProductQuality(products) {
       suggestions.push(wrongCategory);
     }
 
-    // Issue 5: Store section mismatch
-    const sectionMismatch = detectStoreSectionMismatch(product);
-    if (sectionMismatch && !isSuggestionIgnored(product.rawName, sectionMismatch.type)) {
-      suggestions.push(sectionMismatch);
-    }
+    // Issue 5: Store section mismatch - DISABLED (too complex, user will handle manually)
+    // const sectionMismatch = detectStoreSectionMismatch(product);
+    // if (sectionMismatch && !isSuggestionIgnored(product.rawName, sectionMismatch.type)) {
+    //   suggestions.push(sectionMismatch);
+    // }
 
     // Issue 6: Product name too similar to raw name (not cleaned enough)
     const notCleaned = detectNotCleanedEnough(product);
@@ -4054,9 +4122,9 @@ function renameCategory(oldName, newName) {
   Object.keys(customMappings).forEach(rawName => {
     if (customMappings[rawName].productType === oldName) {
       customMappings[rawName].productType = trimmed;
-      customMappings[rawName].storeSection = mapProductTypeToStoreSection(trimmed);
+      // DON'T auto-update storeSection - user controls this manually
       updated = true;
-      console.log('Updated product:', rawName);
+      console.log('Updated product:', rawName, '(storeSection preserved)');
     }
   });
   if (updated) {
@@ -5234,6 +5302,202 @@ function clearAllSuggestions() {
   console.log('✓ Suggestions cleared');
 }
 
+// Open manual receipt entry form
+function openManualEntryForm() {
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  const today = new Date().toISOString().split('T')[0];
+  const currentTime = new Date().toTimeString().split(' ')[0].substring(0, 5);
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>✍️ Manual Receipt Entry</h2>
+    <p style="color: #666; margin-bottom: 20px;">Enter receipt details manually when PDF parsing fails</p>
+
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Store Name</label>
+          <input type="text" id="manual-store" value="Willys" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Receipt ID (optional)</label>
+          <input type="text" id="manual-id" placeholder="Auto-generated if empty" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Date</label>
+          <input type="date" id="manual-date" value="${today}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Time</label>
+          <input type="time" id="manual-time" value="${currentTime}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+    </div>
+
+    <h3>Items</h3>
+    <div id="manual-items-container" style="margin-bottom: 15px;">
+      <!-- Items will be added here -->
+    </div>
+
+    <button onclick="addManualReceiptItem()" class="btn" style="background: #28a745; margin-bottom: 20px;">
+      + Add Item
+    </button>
+
+    <div style="border-top: 2px solid #ddd; padding-top: 20px; margin-top: 20px;">
+      <button onclick="saveManualReceipt()" class="btn" style="background: #667eea; padding: 12px 24px; font-size: 16px;">
+        💾 Save Receipt
+      </button>
+      <button onclick="closeModal()" class="btn" style="background: #999; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+        Cancel
+      </button>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Add first item automatically
+  addManualReceiptItem();
+}
+
+// Add item row to manual entry form
+let manualItemCounter = 0;
+function addManualReceiptItem() {
+  const container = document.getElementById('manual-items-container');
+  manualItemCounter++;
+
+  const itemDiv = document.createElement('div');
+  itemDiv.id = `manual-item-${manualItemCounter}`;
+  itemDiv.style.cssText = 'background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 10px; position: relative;';
+
+  itemDiv.innerHTML = `
+    <button onclick="removeManualItem(${manualItemCounter})" style="position: absolute; top: 10px; right: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px;">
+      Remove
+    </button>
+
+    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Product Name</label>
+        <input type="text" class="manual-item-name" placeholder="e.g., BRÖD SKOGAHOLM 800G" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Quantity</label>
+        <input type="number" class="manual-item-qty" value="1" min="0.01" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Unit Price (kr)</label>
+        <input type="number" class="manual-item-price" value="0" min="0" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Total Price (kr)</label>
+        <input type="number" class="manual-item-total" value="0" min="0" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Discount (kr)</label>
+        <input type="number" class="manual-item-discount" value="0" min="0" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+    </div>
+  `;
+
+  container.appendChild(itemDiv);
+}
+
+// Remove item from manual entry form
+function removeManualItem(itemId) {
+  const itemDiv = document.getElementById(`manual-item-${itemId}`);
+  if (itemDiv) {
+    itemDiv.remove();
+  }
+}
+
+// Save manual receipt
+function saveManualReceipt() {
+  const store = document.getElementById('manual-store').value.trim();
+  const date = document.getElementById('manual-date').value;
+  const time = document.getElementById('manual-time').value;
+  let receiptId = document.getElementById('manual-id').value.trim();
+
+  if (!store || !date || !time) {
+    alert('Please fill in store name, date, and time');
+    return;
+  }
+
+  // Collect items
+  const items = [];
+  const itemDivs = document.querySelectorAll('[id^="manual-item-"]');
+
+  itemDivs.forEach(itemDiv => {
+    const name = itemDiv.querySelector('.manual-item-name').value.trim();
+    const qty = parseFloat(itemDiv.querySelector('.manual-item-qty').value);
+    const unitPrice = parseFloat(itemDiv.querySelector('.manual-item-price').value);
+    const totalPrice = parseFloat(itemDiv.querySelector('.manual-item-total').value);
+    const discount = parseFloat(itemDiv.querySelector('.manual-item-discount').value);
+
+    if (name && qty > 0) {
+      items.push({
+        name: name,
+        quantity: qty,
+        unitPrice: unitPrice,
+        totalPrice: totalPrice,
+        discount: discount
+      });
+    }
+  });
+
+  if (items.length === 0) {
+    alert('Please add at least one item');
+    return;
+  }
+
+  // Generate receipt ID if not provided
+  if (!receiptId) {
+    receiptId = `MANUAL-${date.replace(/-/g, '')}-${time.replace(/:/g, '')}`;
+  }
+
+  // Calculate totals
+  const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
+  const totalDiscount = items.reduce((sum, item) => sum + item.discount, 0);
+
+  // Create receipt object
+  const receipt = {
+    id: receiptId,
+    store: store,
+    date: date,
+    time: time,
+    totalAmount: totalAmount,
+    totalDiscount: totalDiscount,
+    items: items,
+    source: 'manual' // Mark as manually entered
+  };
+
+  // Add to allReceipts
+  if (!allReceipts) {
+    allReceipts = [];
+  }
+  allReceipts.push(receipt);
+
+  // Save to localStorage
+  localStorage.setItem('allReceipts', JSON.stringify(allReceipts));
+
+  // Close modal
+  closeModal();
+
+  // Refresh display
+  displayReceipts();
+  updateStats();
+  refreshAnalysis();
+
+  showMessage(`✅ Manual receipt saved! ${items.length} items, ${totalAmount.toFixed(2)} kr total`, 'success');
+}
+
 // Add manual item
 function addManualItem() {
   const name = prompt('Item name:');
@@ -5267,13 +5531,7 @@ function addManualItem() {
 }
 
 // Initialize shopping list when tab is opened
-document.addEventListener('DOMContentLoaded', () => {
-  // Render shopping list if there are items
-  const list = loadShoppingList();
-  if (list.length > 0) {
-    renderShoppingList();
-  }
-});
+// DOMContentLoaded handler moved to line 2901 to avoid duplicates
 
 </script>
 </body>
