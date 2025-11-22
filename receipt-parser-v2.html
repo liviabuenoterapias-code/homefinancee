@@ -1354,6 +1354,11 @@ let staplesPaginationConfig = {
   itemsPerPage: 25
 };
 
+let discountsPaginationConfig = {
+  currentPage: 1,
+  itemsPerPage: 25
+};
+
 function sortStaples(column) {
   // Toggle direction if clicking the same column, otherwise default to desc
   if (staplesSortConfig.column === column) {
@@ -1369,6 +1374,11 @@ function sortStaples(column) {
 function changeStaplesPage(page) {
   staplesPaginationConfig.currentPage = page;
   renderStaples();
+}
+
+function changeDiscountsPage(page) {
+  discountsPaginationConfig.currentPage = page;
+  renderDiscounts();
 }
 
 function renderStaples() {
@@ -1618,6 +1628,55 @@ function renderCategories() {
 function renderDiscounts() {
   const analysis = analysisInstance.getDiscountAnalysis();
 
+  // Get all discounted products (not just top 20)
+  const allDiscounted = analysisInstance.processed ?
+    Object.entries(analysisInstance.processed.products)
+      .map(([name, purchases]) => {
+        const totalDiscount = purchases.reduce((sum, p) => sum + p.discount, 0);
+        const timesOnSale = purchases.filter(p => p.discount > 0).length;
+        const avgDiscount = timesOnSale > 0 ? totalDiscount / timesOnSale : 0;
+        const discountRate = purchases.length > 0 ? (timesOnSale / purchases.length) * 100 : 0;
+
+        return {
+          name,
+          category: purchases[0].category,
+          totalSaved: totalDiscount,
+          timesOnSale,
+          totalPurchases: purchases.length,
+          discountRate,
+          avgDiscount
+        };
+      })
+      .filter(p => p.totalSaved > 0)
+      .sort((a, b) => b.discountRate - a.discountRate)
+    : [];
+
+  // Pagination
+  const totalItems = allDiscounted.length;
+  const totalPages = Math.ceil(totalItems / discountsPaginationConfig.itemsPerPage);
+  const startIndex = (discountsPaginationConfig.currentPage - 1) * discountsPaginationConfig.itemsPerPage;
+  const endIndex = startIndex + discountsPaginationConfig.itemsPerPage;
+  const paginatedDiscounts = allDiscounted.slice(startIndex, endIndex);
+
+  // Build pagination controls
+  const paginationHtml = totalPages > 1 ? `
+    <div style="margin-top: 15px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <button onclick="changeDiscountsPage(${discountsPaginationConfig.currentPage - 1})"
+              ${discountsPaginationConfig.currentPage === 1 ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        ← Previous
+      </button>
+      <span style="color: #666;">
+        Page ${discountsPaginationConfig.currentPage} of ${totalPages} (${totalItems} items)
+      </span>
+      <button onclick="changeDiscountsPage(${discountsPaginationConfig.currentPage + 1})"
+              ${discountsPaginationConfig.currentPage === totalPages ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        Next →
+      </button>
+    </div>
+  ` : `<p style="margin-top: 10px; text-align: center; color: #666;">${totalItems} discounted products</p>`;
+
   const html = `
     <div class="analysis-section">
       <div class="section-header" onclick="toggleSection('discounts-content')">
@@ -1640,7 +1699,7 @@ function renderDiscounts() {
           </div>
         </div>
 
-        <h3 style="margin: 20px 0 10px 0;">Top Discounted Products</h3>
+        <h3 style="margin: 20px 0 10px 0;">Discounted Products (sorted by discount rate)</h3>
         <table class="analysis-table">
           <thead>
             <tr>
@@ -1651,16 +1710,18 @@ function renderDiscounts() {
             </tr>
           </thead>
           <tbody>
-            ${analysis.topDiscounted.slice(0, 10).map(item => `
+            ${paginatedDiscounts.map(item => `
               <tr>
                 <td><strong>${item.name}</strong></td>
                 <td style="color: #28a745;">${item.totalSaved.toFixed(2)} kr</td>
                 <td>${item.timesOnSale}/${item.totalPurchases}</td>
-                <td>${item.discountRate.toFixed(0)}%</td>
+                <td><strong>${item.discountRate.toFixed(0)}%</strong></td>
               </tr>
             `).join('')}
           </tbody>
         </table>
+
+        ${paginationHtml}
       </div>
     </div>
   `;
