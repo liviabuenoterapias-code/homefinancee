@@ -1372,7 +1372,7 @@ function changeStaplesPage(page) {
 }
 
 function renderStaples() {
-  const staples = analysisInstance.getStapleProducts(0.7);
+  const staples = analysisInstance.getStapleProducts(0.5);  // Lower threshold to show more products
 
   // Sort the staples based on current config
   const sortedStaples = [...staples].sort((a, b) => {
