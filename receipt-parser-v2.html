@@ -3397,6 +3397,10 @@ function detectMissingBrand(product) {
 function detectBrandInProductName(product) {
   if (!product.brand || !product.productName) return null;
 
+  // Skip very short brands (2 chars or less) to avoid false positives
+  // e.g., "na" matching in "gröna" where ö breaks word boundary
+  if (product.brand.length <= 2) return null;
+
   const regex = new RegExp(`\\b${product.brand}\\b`, 'i');
   if (regex.test(product.productName)) {
     const cleaned = product.productName.replace(regex, '').replace(/\s+/g, ' ').trim();
