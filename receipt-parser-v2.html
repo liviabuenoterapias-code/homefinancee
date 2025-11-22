@@ -1359,6 +1359,11 @@ let discountsPaginationConfig = {
   itemsPerPage: 25
 };
 
+let discountsSortConfig = {
+  column: 'discountRate',  // Default sort by discount rate
+  direction: 'desc'
+};
+
 function sortStaples(column) {
   // Toggle direction if clicking the same column, otherwise default to desc
   if (staplesSortConfig.column === column) {
@@ -1378,6 +1383,18 @@ function changeStaplesPage(page) {
 
 function changeDiscountsPage(page) {
   discountsPaginationConfig.currentPage = page;
+  renderDiscounts();
+}
+
+function sortDiscounts(column) {
+  // Toggle direction if clicking the same column, otherwise default to desc
+  if (discountsSortConfig.column === column) {
+    discountsSortConfig.direction = discountsSortConfig.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    discountsSortConfig.column = column;
+    discountsSortConfig.direction = 'desc';
+  }
+  discountsPaginationConfig.currentPage = 1; // Reset to first page when sorting
   renderDiscounts();
 }
 
@@ -1648,15 +1665,51 @@ function renderDiscounts() {
         };
       })
       .filter(p => p.totalSaved > 0)
-      .sort((a, b) => b.discountRate - a.discountRate)
     : [];
 
+  // Sort the discounts based on current config
+  const sortedDiscounts = [...allDiscounted].sort((a, b) => {
+    let aVal, bVal;
+
+    switch (discountsSortConfig.column) {
+      case 'name':
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+        return discountsSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'totalSaved':
+        aVal = a.totalSaved;
+        bVal = b.totalSaved;
+        break;
+      case 'timesOnSale':
+        aVal = a.timesOnSale;
+        bVal = b.timesOnSale;
+        break;
+      case 'discountRate':
+        aVal = a.discountRate;
+        bVal = b.discountRate;
+        break;
+      default:
+        return 0;
+    }
+
+    return discountsSortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+
+  // Helper function to render sort indicator
+  const sortIndicator = (column) => {
+    if (discountsSortConfig.column === column) {
+      return discountsSortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return '';
+  };
+
   // Pagination
-  const totalItems = allDiscounted.length;
+  const totalItems = sortedDiscounts.length;
   const totalPages = Math.ceil(totalItems / discountsPaginationConfig.itemsPerPage);
   const startIndex = (discountsPaginationConfig.currentPage - 1) * discountsPaginationConfig.itemsPerPage;
   const endIndex = startIndex + discountsPaginationConfig.itemsPerPage;
-  const paginatedDiscounts = allDiscounted.slice(startIndex, endIndex);
+  const paginatedDiscounts = sortedDiscounts.slice(startIndex, endIndex);
 
   // Build pagination controls
   const paginationHtml = totalPages > 1 ? `
@@ -1699,14 +1752,14 @@ function renderDiscounts() {
           </div>
         </div>
 
-        <h3 style="margin: 20px 0 10px 0;">Discounted Products (sorted by discount rate)</h3>
+        <h3 style="margin: 20px 0 10px 0;">Discounted Products</h3>
         <table class="analysis-table">
           <thead>
             <tr>
-              <th>Product</th>
-              <th>Total Saved</th>
-              <th>Times On Sale</th>
-              <th>Discount Rate</th>
+              <th class="sortable" onclick="sortDiscounts('name')">Product${sortIndicator('name')}</th>
+              <th class="sortable" onclick="sortDiscounts('totalSaved')">Total Saved${sortIndicator('totalSaved')}</th>
+              <th class="sortable" onclick="sortDiscounts('timesOnSale')">Times On Sale${sortIndicator('timesOnSale')}</th>
+              <th class="sortable" onclick="sortDiscounts('discountRate')">Discount Rate${sortIndicator('discountRate')}</th>
             </tr>
           </thead>
           <tbody>
