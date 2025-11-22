@@ -5108,13 +5108,24 @@ function generateSuggestions() {
     }
   });
 
+  // Filter out dismissed suggestions and items already in shopping list
+  const dismissed = loadDismissedSuggestions();
+  const currentList = loadShoppingList();
+  const currentListNames = new Set(currentList.map(item => item.name.toLowerCase()));
+
+  const filteredSuggestions = suggestions.filter(sug => {
+    const isDismissed = dismissed[sug.name.toLowerCase()];
+    const isInList = currentListNames.has(sug.name.toLowerCase());
+    return !isDismissed && !isInList;
+  });
+
   // Sort by urgency
-  suggestions.sort((a, b) => {
+  filteredSuggestions.sort((a, b) => {
     if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
     return a.daysSince - b.daysSince;
   });
 
-  renderSuggestions(suggestions);
+  renderSuggestions(filteredSuggestions);
 }
 
 // Render suggestions
@@ -5151,15 +5162,42 @@ function renderSuggestions(suggestions) {
               ~${sug.avgPrice.toFixed(2)} kr
             </div>
           </div>
-          <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.avgPrice})" style="margin: 0;">
-            + Add
-          </button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.avgPrice})" style="margin: 0; background: #28a745;">
+              + Add
+            </button>
+            <button class="btn" onclick="dismissSuggestion('${sug.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #6c757d; padding: 8px 12px;">
+              Dismiss
+            </button>
+          </div>
         </div>
       </div>
     `;
   });
 
   list.innerHTML = html;
+}
+
+// Load dismissed suggestions from localStorage
+function loadDismissedSuggestions() {
+  const saved = localStorage.getItem('dismissedSuggestions');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save dismissed suggestions to localStorage
+function saveDismissedSuggestions(dismissed) {
+  localStorage.setItem('dismissedSuggestions', JSON.stringify(dismissed));
+}
+
+// Dismiss a suggestion
+function dismissSuggestion(name) {
+  const dismissed = loadDismissedSuggestions();
+  dismissed[name.toLowerCase()] = Date.now();
+  saveDismissedSuggestions(dismissed);
+
+  // Regenerate suggestions to remove dismissed one
+  generateSuggestions();
+  showMessage(`Dismissed "${name}"`, 'info');
 }
 
 // Add suggestion to shopping list
@@ -5177,6 +5215,7 @@ function addSuggestionToList(name, storeSection, estimatedPrice) {
     name: name,
     category: storeSection,  // Using 'category' field for backward compatibility, but it's actually storeSection
     checked: false,
+    quantity: 1,  // Default quantity
     estimatedPrice: estimatedPrice,
     isRecurrent: true,
     addedDate: new Date().toISOString()
@@ -5184,6 +5223,10 @@ function addSuggestionToList(name, storeSection, estimatedPrice) {
 
   list.push(newItem);
   saveShoppingList(list);
+
+  // Dismiss the suggestion after adding
+  dismissSuggestion(name);
+
   renderShoppingList();
   showMessage(`Added "${name}" to your list`, 'success');
 }
@@ -5252,7 +5295,7 @@ function renderShoppingList() {
   const uncheckedCount = list.filter(i => !i.checked).length;
   const estimatedTotal = list
     .filter(i => !i.checked)
-    .reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+    .reduce((sum, i) => sum + ((i.estimatedPrice || 0) * (i.quantity || 1)), 0);
 
   statsDiv.textContent = `${uncheckedCount} items • Estimated: ${estimatedTotal.toFixed(0)} kr`;
 
@@ -5273,18 +5316,34 @@ function renderShoppingList() {
           </span>
         </div>
         <div style="background: #f9f9f9; padding: 10px; border-radius: 0 0 8px 8px;">
-          ${items.map(item => `
+          ${items.map(item => {
+            const quantity = item.quantity || 1;
+            const totalPrice = (item.estimatedPrice || 0) * quantity;
+            return `
             <div style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; ${item.checked ? 'opacity: 0.5;' : ''}">
               <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;">
               <div style="flex: 1;">
                 <div style="font-weight: 500; ${item.checked ? 'text-decoration: line-through;' : ''}">${item.name}</div>
-                ${item.estimatedPrice ? `<div style="font-size: 12px; color: #666; margin-top: 2px;">~${item.estimatedPrice.toFixed(2)} kr</div>` : ''}
+                ${item.estimatedPrice ? `
+                  <div style="font-size: 12px; color: #666; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
+                    <span>~${item.estimatedPrice.toFixed(2)} kr</span>
+                    ${quantity > 1 ? `<span style="color: #28a745; font-weight: 500;">× ${quantity} = ${totalPrice.toFixed(2)} kr</span>` : ''}
+                  </div>
+                ` : ''}
               </div>
-              <button onclick="deleteItem('${item.id}')" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
-                Delete
-              </button>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 4px; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 2px;">
+                  <button onclick="updateQuantity('${item.id}', -1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">−</button>
+                  <span style="min-width: 20px; text-align: center; font-weight: 500;">${quantity}</span>
+                  <button onclick="updateQuantity('${item.id}', 1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">+</button>
+                </div>
+                <button onclick="deleteItem('${item.id}')" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                  Delete
+                </button>
+              </div>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
       </div>
     `;
@@ -5299,6 +5358,22 @@ function toggleItem(itemId) {
   const item = list.find(i => i.id === itemId);
   if (item) {
     item.checked = !item.checked;
+    saveShoppingList(list);
+    renderShoppingList();
+  }
+}
+
+// Update item quantity
+function updateQuantity(itemId, change) {
+  const list = loadShoppingList();
+  const item = list.find(i => i.id === itemId);
+  if (item) {
+    const newQuantity = (item.quantity || 1) + change;
+    if (newQuantity < 1) {
+      // Don't allow quantity to go below 1
+      return;
+    }
+    item.quantity = newQuantity;
     saveShoppingList(list);
     renderShoppingList();
   }
@@ -5357,14 +5432,12 @@ function clearAllSuggestions() {
 
   saveShoppingList(manualItems);
   renderShoppingList();
-  showMessage(`${suggestedItems.length} suggested items cleared`, 'success');
 
-  // Also hide the suggestions section
-  const suggestionsSection = document.getElementById('suggestions-section');
-  if (suggestionsSection) {
-    suggestionsSection.style.display = 'none';
-  }
+  // Also clear dismissed suggestions and regenerate
+  localStorage.removeItem('dismissedSuggestions');
+  generateSuggestions();
 
+  showMessage(`${suggestedItems.length} suggested items cleared and dismissed list reset`, 'success');
   console.log('✓ Suggestions cleared');
 }
 
