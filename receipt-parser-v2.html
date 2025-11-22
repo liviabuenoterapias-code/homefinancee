@@ -2157,17 +2157,18 @@ function updateProductTagsByRawName(rawName, tags) {
   saveCustomMappings(customMappings);
 
   // Save scroll position before re-rendering
-  const libraryContent = document.getElementById('product-library-content');
-  const scrollPosition = libraryContent ? libraryContent.scrollTop : 0;
+  const scrollContainer = document.getElementById('product-library-scroll-container');
+  const scrollPosition = scrollContainer ? scrollContainer.scrollTop : 0;
 
   renderProductLibrary(document.getElementById('productSearch').value);
 
   // Restore scroll position after re-rendering
-  if (libraryContent) {
-    setTimeout(() => {
-      libraryContent.scrollTop = scrollPosition;
-    }, 0);
-  }
+  setTimeout(() => {
+    const scrollContainerAfter = document.getElementById('product-library-scroll-container');
+    if (scrollContainerAfter) {
+      scrollContainerAfter.scrollTop = scrollPosition;
+    }
+  }, 0);
 }
 
 // Show detailed products for a category
@@ -2757,7 +2758,7 @@ function renderProductLibrary(searchFilter = '') {
         • <span style="color: #28a745;"><strong>${Object.keys(customMappings).length}</strong> custom mappings</span>
       ` : ''}
     </div>
-    <div style="max-height: 70vh; overflow-y: auto;">
+    <div id="product-library-scroll-container" style="max-height: 70vh; overflow-y: auto;">
       <table class="product-table">
         <thead>
           <tr>
@@ -2934,17 +2935,18 @@ function updateProductMapping(element) {
   console.log('Refreshing Product Library...');
 
   // Save scroll position before re-rendering
-  const libraryContent = document.getElementById('product-library-content');
-  const scrollPosition = libraryContent ? libraryContent.scrollTop : 0;
+  const scrollContainer = document.getElementById('product-library-scroll-container');
+  const scrollPosition = scrollContainer ? scrollContainer.scrollTop : 0;
 
   renderProductLibrary(document.getElementById('productSearch').value);
 
   // Restore scroll position after re-rendering
-  if (libraryContent) {
-    setTimeout(() => {
-      libraryContent.scrollTop = scrollPosition;
-    }, 0);
-  }
+  setTimeout(() => {
+    const scrollContainerAfter = document.getElementById('product-library-scroll-container');
+    if (scrollContainerAfter) {
+      scrollContainerAfter.scrollTop = scrollPosition;
+    }
+  }, 0);
 
   console.log('=== UPDATE COMPLETE ===');
 }
