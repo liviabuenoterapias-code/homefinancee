@@ -1343,10 +1343,15 @@ function renderTrends() {
   }, 100);
 }
 
-// Sorting state for staples table
+// Sorting and pagination state for staples table
 let staplesSortConfig = {
   column: 'totalSpent',  // Default sort by total spent
   direction: 'desc'
+};
+
+let staplesPaginationConfig = {
+  currentPage: 1,
+  itemsPerPage: 25
 };
 
 function sortStaples(column) {
@@ -1357,6 +1362,12 @@ function sortStaples(column) {
     staplesSortConfig.column = column;
     staplesSortConfig.direction = 'desc';
   }
+  staplesPaginationConfig.currentPage = 1; // Reset to first page when sorting
+  renderStaples();
+}
+
+function changeStaplesPage(page) {
+  staplesPaginationConfig.currentPage = page;
   renderStaples();
 }
 
@@ -1431,6 +1442,32 @@ function renderStaples() {
     tagLookupMap[item.name] = Array.from(allTags).sort();
   });
 
+  // Pagination
+  const totalItems = sortedStaples.length;
+  const totalPages = Math.ceil(totalItems / staplesPaginationConfig.itemsPerPage);
+  const startIndex = (staplesPaginationConfig.currentPage - 1) * staplesPaginationConfig.itemsPerPage;
+  const endIndex = startIndex + staplesPaginationConfig.itemsPerPage;
+  const paginatedStaples = sortedStaples.slice(startIndex, endIndex);
+
+  // Build pagination controls
+  const paginationHtml = totalPages > 1 ? `
+    <div style="margin-top: 15px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <button onclick="changeStaplesPage(${staplesPaginationConfig.currentPage - 1})"
+              ${staplesPaginationConfig.currentPage === 1 ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        ← Previous
+      </button>
+      <span style="color: #666;">
+        Page ${staplesPaginationConfig.currentPage} of ${totalPages} (${totalItems} items)
+      </span>
+      <button onclick="changeStaplesPage(${staplesPaginationConfig.currentPage + 1})"
+              ${staplesPaginationConfig.currentPage === totalPages ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        Next →
+      </button>
+    </div>
+  ` : `<p style="margin-top: 10px; text-align: center; color: #666;">${totalItems} staple products</p>`;
+
   const html = `
     <div class="analysis-section">
       <div class="section-header" onclick="toggleSection('staples-content')">
@@ -1453,7 +1490,7 @@ function renderStaples() {
             </tr>
           </thead>
           <tbody>
-            ${sortedStaples.slice(0, 20).map(item => {
+            ${paginatedStaples.map(item => {
               const tags = tagLookupMap[item.name] || [];
               return `
               <tr onclick="showProductDetail('${item.name.replace(/'/g, "\\'")}')">
@@ -1474,7 +1511,7 @@ function renderStaples() {
           </tbody>
         </table>
 
-        ${sortedStaples.length > 20 ? `<p style="margin-top: 10px; text-align: center; color: #666;">Showing top 20 of ${sortedStaples.length} staple products</p>` : ''}
+        ${paginationHtml}
       </div>
     </div>
   `;
@@ -5034,6 +5071,18 @@ function generateSuggestions() {
     return;
   }
 
+  // Use analysis instance to get staple products (most frequently purchased)
+  if (!analysisInstance) {
+    analysisInstance = new GroceryAnalysis(allReceipts);
+  }
+
+  // Get top 50 staple products (purchased regularly)
+  const stapleProducts = analysisInstance.getStapleProducts(0.5); // Lower frequency threshold to get more items
+  const top50Staples = stapleProducts.slice(0, 50);
+
+  // Create a set of staple product names for quick lookup
+  const stapleNames = new Set(top50Staples.map(s => s.name.toLowerCase()));
+
   const customMappings = loadCustomMappings();
   const suggestions = [];
 
@@ -5049,6 +5098,12 @@ function generateSuggestions() {
       const standardName = window.ProductCategories.standardizeProduct(item.name);
       const mapping = customMappings[item.name] || {};
       const productName = mapping.productName || standardName;
+
+      // ONLY process items that are in the top 50 staples
+      if (!stapleNames.has(productName.toLowerCase())) {
+        return;
+      }
+
       const brand = mapping.brand || '';
       const productType = mapping.productType || '';
       const storeSection = mapping.storeSection || '';
@@ -5098,11 +5153,11 @@ function generateSuggestions() {
       avgDaysBetween = totalDays / (sortedDates.length - 1);
     }
 
-    // Determine if this should be suggested
+    // Determine if this should be suggested (only staple items that are overdue)
     const isOverdue = daysSince >= avgDaysBetween * 0.8;
     const purchaseCount = purchases.length;
 
-    if (isOverdue || purchaseCount >= 3) {
+    if (isOverdue) {
       suggestions.push({
         name: group.name,
         brand: group.brand,
