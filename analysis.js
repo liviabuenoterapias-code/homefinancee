@@ -285,7 +285,7 @@ class GroceryAnalysis {
         };
       })
       .filter(p => p.totalSaved > 0)
-      .sort((a, b) => b.totalSaved - a.totalSaved);
+      .sort((a, b) => b.discountRate - a.discountRate);  // Sort by highest discount rate
 
     return {
       totalSavings,
