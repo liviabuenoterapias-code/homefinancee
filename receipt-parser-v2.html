@@ -2155,7 +2155,19 @@ function updateProductTagsByRawName(rawName, tags) {
 
   // Save and refresh library
   saveCustomMappings(customMappings);
+
+  // Save scroll position before re-rendering
+  const libraryContent = document.getElementById('product-library-content');
+  const scrollPosition = libraryContent ? libraryContent.scrollTop : 0;
+
   renderProductLibrary(document.getElementById('productSearch').value);
+
+  // Restore scroll position after re-rendering
+  if (libraryContent) {
+    setTimeout(() => {
+      libraryContent.scrollTop = scrollPosition;
+    }, 0);
+  }
 }
 
 // Show detailed products for a category
