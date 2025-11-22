@@ -3343,6 +3343,12 @@ function scanProductQuality(products) {
     if (brandCapIssue && !isSuggestionIgnored(product.rawName, brandCapIssue.type)) {
       suggestions.push(brandCapIssue);
     }
+
+    // Issue 10: Product Type "Other" should be "övrigt"
+    const otherProductType = detectOtherProductType(product);
+    if (otherProductType && !isSuggestionIgnored(product.rawName, otherProductType.type)) {
+      suggestions.push(otherProductType);
+    }
   });
 
   // Sort by confidence (High -> Medium -> Low)
@@ -3716,6 +3722,25 @@ function detectBrandCapitalizationIssues(product) {
       current: { brand: product.brand },
       suggested: { brand: lower },
       reason: 'Brand names should be lowercase for consistency (e.g., "arla", "valio", "zeta").',
+      confidence: 'high'
+    };
+  }
+
+  return null;
+}
+
+// Detect Product Type "Other" that should be "övrigt"
+function detectOtherProductType(product) {
+  if (!product.productType) return null;
+
+  // Check if product type is "Other" (case-insensitive)
+  if (product.productType.toLowerCase() === 'other') {
+    return {
+      type: 'other_product_type',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: 'övrigt' },
+      reason: 'Product Type "Other" should be changed to "övrigt" for Swedish consistency.',
       confidence: 'high'
     };
   }
