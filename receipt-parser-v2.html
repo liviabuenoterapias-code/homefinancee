@@ -5034,35 +5034,44 @@ function generateSuggestions() {
     return;
   }
 
-  const productLibrary = buildProductLibrary();
   const customMappings = loadCustomMappings();
   const suggestions = [];
 
-  // Group products by product name
+  // Group products by standardized product name from actual receipts
   const groupedProducts = {};
 
-  productLibrary.forEach(product => {
-    const productName = product.productName;
+  // Process each receipt and each item
+  allReceipts.forEach(receipt => {
+    if (!receipt.items || !receipt.date) return;
 
-    if (!groupedProducts[productName]) {
-      groupedProducts[productName] = {
-        name: productName,
-        brand: product.brand,
-        productType: product.productType,
-        storeSection: product.storeSection,
-        purchases: [],
-        totalSpent: 0,
-        lastSeen: product.lastSeen
-      };
-    }
+    receipt.items.forEach(item => {
+      // Get standardized product name using same logic as product library
+      const standardName = window.ProductCategories.standardizeProduct(item.name);
+      const mapping = customMappings[item.name] || {};
+      const productName = mapping.productName || standardName;
+      const brand = mapping.brand || '';
+      const productType = mapping.productType || '';
+      const storeSection = mapping.storeSection || '';
 
-    groupedProducts[productName].purchases.push({
-      date: new Date(product.lastSeen),
-      count: product.count,
-      spent: product.totalSpent
+      if (!groupedProducts[productName]) {
+        groupedProducts[productName] = {
+          name: productName,
+          brand: brand,
+          productType: productType,
+          storeSection: storeSection,
+          purchases: [],
+          totalSpent: 0
+        };
+      }
+
+      groupedProducts[productName].purchases.push({
+        date: new Date(receipt.date),
+        price: item.totalPrice,
+        quantity: item.quantity
+      });
+
+      groupedProducts[productName].totalSpent += item.totalPrice;
     });
-
-    groupedProducts[productName].totalSpent += product.totalSpent;
   });
 
   // Calculate frequency and create suggestions
@@ -5070,18 +5079,18 @@ function generateSuggestions() {
     const purchases = group.purchases;
     if (purchases.length === 0) return;
 
-    // Calculate average price
-    const totalCount = purchases.reduce((sum, p) => sum + p.count, 0);
-    const avgPrice = group.totalSpent / totalCount;
+    // Calculate average price per unit
+    const totalQuantity = purchases.reduce((sum, p) => sum + p.quantity, 0);
+    const avgPrice = group.totalSpent / totalQuantity;
 
     // Calculate days since last purchase
-    const lastPurchase = new Date(Math.max(...purchases.map(p => p.date)));
+    const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
+    const lastPurchase = sortedDates[sortedDates.length - 1];
     const daysSince = Math.floor((new Date() - lastPurchase) / (1000 * 60 * 60 * 24));
 
-    // Calculate frequency (if multiple purchases)
+    // Calculate frequency (average days between purchases)
     let avgDaysBetween = 999;
     if (purchases.length >= 2) {
-      const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
       let totalDays = 0;
       for (let i = 1; i < sortedDates.length; i++) {
         totalDays += (sortedDates[i] - sortedDates[i-1]) / (1000 * 60 * 60 * 24);
