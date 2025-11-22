@@ -5302,39 +5302,79 @@ function clearAllSuggestions() {
   console.log('✓ Suggestions cleared');
 }
 
-// Open manual receipt entry form
-function openManualEntryForm() {
+// Draft management functions
+function loadManualReceiptDraft() {
+  const draft = localStorage.getItem('manualReceiptDraft');
+  return draft ? JSON.parse(draft) : null;
+}
+
+function saveManualReceiptDraft() {
+  const store = document.getElementById('manual-store')?.value.trim();
+  const date = document.getElementById('manual-date')?.value;
+  const time = document.getElementById('manual-time')?.value;
+  const receiptId = document.getElementById('manual-id')?.value.trim();
+
+  const items = [];
+  const itemDivs = document.querySelectorAll('[id^="manual-item-"]');
+
+  itemDivs.forEach(itemDiv => {
+    const name = itemDiv.querySelector('.manual-item-name')?.value.trim() || '';
+    const qty = itemDiv.querySelector('.manual-item-qty')?.value || '1';
+    const unitPrice = itemDiv.querySelector('.manual-item-price')?.value || '0';
+    const totalPrice = itemDiv.querySelector('.manual-item-total')?.value || '0';
+    const discount = itemDiv.querySelector('.manual-item-discount')?.value || '0';
+
+    items.push({ name, qty, unitPrice, totalPrice, discount });
+  });
+
+  const draft = {
+    store,
+    date,
+    time,
+    receiptId,
+    items,
+    timestamp: new Date().toISOString()
+  };
+
+  localStorage.setItem('manualReceiptDraft', JSON.stringify(draft));
+}
+
+function clearManualReceiptDraft() {
+  localStorage.removeItem('manualReceiptDraft');
+}
+
+function openManualEntryFormWithDraft(draft) {
   const modal = document.getElementById('product-modal');
   const overlay = document.getElementById('modal-overlay');
 
-  const today = new Date().toISOString().split('T')[0];
-  const currentTime = new Date().toTimeString().split(' ')[0].substring(0, 5);
-
   document.getElementById('modal-content').innerHTML = `
-    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <span class="close-modal" onclick="closeModal(); clearManualReceiptDraft();">&times;</span>
     <h2>✍️ Manual Receipt Entry</h2>
-    <p style="color: #666; margin-bottom: 20px;">Enter receipt details manually when PDF parsing fails</p>
+    <p style="color: #666; margin-bottom: 10px;">Enter receipt details manually when PDF parsing fails</p>
+    <p style="background: #fff3cd; color: #856404; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-bottom: 20px;">
+      📝 Draft restored from ${new Date(draft.timestamp).toLocaleString()}
+    </p>
 
     <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
         <div>
           <label style="display: block; margin-bottom: 5px; font-weight: bold;">Store Name</label>
-          <input type="text" id="manual-store" value="Willys" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <input type="text" id="manual-store" value="${draft.store || 'Willys'}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
         </div>
         <div>
           <label style="display: block; margin-bottom: 5px; font-weight: bold;">Receipt ID (optional)</label>
-          <input type="text" id="manual-id" placeholder="Auto-generated if empty" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <input type="text" id="manual-id" value="${draft.receiptId || ''}" onchange="saveManualReceiptDraft()" placeholder="Auto-generated if empty" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
         </div>
       </div>
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
         <div>
           <label style="display: block; margin-bottom: 5px; font-weight: bold;">Date</label>
-          <input type="date" id="manual-date" value="${today}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <input type="date" id="manual-date" value="${draft.date || new Date().toISOString().split('T')[0]}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
         </div>
         <div>
           <label style="display: block; margin-bottom: 5px; font-weight: bold;">Time</label>
-          <input type="time" id="manual-time" value="${currentTime}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <input type="time" id="manual-time" value="${draft.time || new Date().toTimeString().split(' ')[0].substring(0, 5)}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
         </div>
       </div>
     </div>
@@ -5352,8 +5392,101 @@ function openManualEntryForm() {
       <button onclick="saveManualReceipt()" class="btn" style="background: #667eea; padding: 12px 24px; font-size: 16px;">
         💾 Save Receipt
       </button>
-      <button onclick="closeModal()" class="btn" style="background: #999; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+      <button onclick="closeModal(); clearManualReceiptDraft();" class="btn" style="background: #999; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
         Cancel
+      </button>
+      <button onclick="if(confirm('Discard this draft?')) { clearManualReceiptDraft(); closeModal(); }" class="btn" style="background: #dc3545; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+        Discard Draft
+      </button>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Restore items
+  draft.items.forEach(item => {
+    addManualReceiptItem();
+    const lastItem = document.querySelector('[id^="manual-item-"]:last-child');
+    if (lastItem) {
+      lastItem.querySelector('.manual-item-name').value = item.name || '';
+      lastItem.querySelector('.manual-item-qty').value = item.qty || '1';
+      lastItem.querySelector('.manual-item-price').value = item.unitPrice || '0';
+      lastItem.querySelector('.manual-item-total').value = item.totalPrice || '0';
+      lastItem.querySelector('.manual-item-discount').value = item.discount || '0';
+    }
+  });
+
+  // If no items were in draft, add one empty item
+  if (draft.items.length === 0) {
+    addManualReceiptItem();
+  }
+}
+
+// Open manual receipt entry form
+function openManualEntryForm() {
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  const today = new Date().toISOString().split('T')[0];
+  const currentTime = new Date().toTimeString().split(' ')[0].substring(0, 5);
+
+  // Check for draft data
+  const draft = loadManualReceiptDraft();
+  if (draft) {
+    if (confirm('You have unsaved draft data from a previous entry. Would you like to restore it?')) {
+      openManualEntryFormWithDraft(draft);
+      return;
+    } else {
+      // User chose not to restore - clear the draft
+      clearManualReceiptDraft();
+    }
+  }
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal(); saveManualReceiptDraft();">&times;</span>
+    <h2>✍️ Manual Receipt Entry</h2>
+    <p style="color: #666; margin-bottom: 20px;">Enter receipt details manually when PDF parsing fails</p>
+
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Store Name</label>
+          <input type="text" id="manual-store" value="Willys" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Receipt ID (optional)</label>
+          <input type="text" id="manual-id" placeholder="Auto-generated if empty" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Date</label>
+          <input type="date" id="manual-date" value="${today}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Time</label>
+          <input type="time" id="manual-time" value="${currentTime}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+    </div>
+
+    <h3>Items</h3>
+    <div id="manual-items-container" style="margin-bottom: 15px;">
+      <!-- Items will be added here -->
+    </div>
+
+    <button onclick="addManualReceiptItem()" class="btn" style="background: #28a745; margin-bottom: 20px;">
+      + Add Item
+    </button>
+
+    <div style="border-top: 2px solid #ddd; padding-top: 20px; margin-top: 20px;">
+      <button onclick="saveManualReceipt()" class="btn" style="background: #667eea; padding: 12px 24px; font-size: 16px;">
+        💾 Save Receipt
+      </button>
+      <button onclick="saveManualReceiptDraft(); closeModal();" class="btn" style="background: #999; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+        Cancel (Save Draft)
       </button>
     </div>
   `;
@@ -5383,26 +5516,26 @@ function addManualReceiptItem() {
     <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
       <div>
         <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Product Name</label>
-        <input type="text" class="manual-item-name" placeholder="e.g., BRÖD SKOGAHOLM 800G" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+        <input type="text" class="manual-item-name" placeholder="e.g., BRÖD SKOGAHOLM 800G" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
       </div>
       <div>
         <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Quantity</label>
-        <input type="number" class="manual-item-qty" value="1" min="0.01" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+        <input type="number" class="manual-item-qty" value="1" min="0.01" step="0.01" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
       </div>
       <div>
         <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Unit Price (kr)</label>
-        <input type="number" class="manual-item-price" value="0" min="0" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+        <input type="number" class="manual-item-price" value="0" min="0" step="0.01" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
       </div>
     </div>
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
       <div>
         <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Total Price (kr)</label>
-        <input type="number" class="manual-item-total" value="0" min="0" step="0.01" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+        <input type="number" class="manual-item-total" value="0" min="0" step="0.01" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
       </div>
       <div>
         <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Discount (kr)</label>
-        <input type="number" class="manual-item-discount" value="0" min="0" step="0.01" placeholder="Enter as positive number" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+        <input type="number" class="manual-item-discount" value="0" min="0" step="0.01" placeholder="Enter as positive number" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
         <div style="font-size: 10px; color: #666; margin-top: 2px;">Enter as positive (e.g., 25 not -25)</div>
       </div>
     </div>
@@ -5490,6 +5623,9 @@ function saveManualReceipt() {
 
   // Close modal
   closeModal();
+
+  // Clear the draft since we saved successfully
+  clearManualReceiptDraft();
 
   // Refresh display
   displayReceipts();
