@@ -5724,15 +5724,19 @@ function clearAllSuggestions() {
 
   if (!confirm(`Remove all ${suggestedItems.length} suggested item(s)?\n\n${manualItems.length} manually added items will remain.`)) return;
 
+  // Clear suggested items from shopping list
   saveShoppingList(manualItems);
   renderShoppingList();
 
-  // Also clear dismissed suggestions and regenerate
+  // Clear dismissed suggestions and regenerate
   localStorage.removeItem('dismissedSuggestions');
-  generateSuggestions();
 
-  showMessage(`${suggestedItems.length} suggested items cleared and dismissed list reset`, 'success');
-  console.log('✓ Suggestions cleared');
+  // Force immediate UI update with a slight delay to ensure shopping list renders first
+  setTimeout(() => {
+    generateSuggestions();
+    showMessage(`${suggestedItems.length} suggested items cleared and suggestions regenerated`, 'success');
+    console.log('✓ Suggestions cleared and regenerated');
+  }, 100);
 }
 
 // Draft management functions
@@ -6283,7 +6287,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v2.03
+  v2.04
 </footer>
 
 </body>

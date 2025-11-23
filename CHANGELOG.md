@@ -1,5 +1,25 @@
 # Receipt Parser - Changelog
 
+## v2.04 - 2025-01-23
+
+### Fixed "Clear Suggestions" Button Feedback
+
+**Problem:** Clicking "Clear All Suggestions" button gave no visual feedback until page refresh.
+- Button executed code correctly but UI didn't update
+- User had to refresh page to see suggestions regenerated
+- No immediate confirmation that action completed
+
+**Solution:** Added delayed UI update with proper feedback
+- Added 100ms setTimeout to ensure shopping list renders before regenerating suggestions
+- Shows success message: "X suggested items cleared and suggestions regenerated"
+- Immediate visual feedback when button is clicked
+- Suggestions section updates automatically
+
+**Location:** Lines 5704-5740 in both files
+**Impact:** Better user experience with immediate visual confirmation
+
+---
+
 ## v2.03 - 2025-01-23
 
 ### Removed Misleading "Good Deal" Feature
@@ -226,6 +246,7 @@ See `FIXES-APPLIED.md` for detailed documentation:
 
 | Version | Date | Major Changes |
 |---------|------|---------------|
+| v2.04 | 2025-01-23 | Fixed "Clear Suggestions" button - immediate visual feedback |
 | v2.03 | 2025-01-23 | Removed misleading "good deal" badge (based on past prices, not current) |
 | v2.02 | 2025-01-23 | Smart shopping list: autocomplete add item, intelligent suggestions with urgency scoring, complementary items |
 | v2.01 | 2025-01-23 | Tag filter accuracy fix |
