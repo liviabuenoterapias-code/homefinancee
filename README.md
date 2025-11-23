@@ -2,7 +2,7 @@
 
 A web-based PDF receipt parser specifically designed for Willys grocery store receipts (Swedish format).
 
-**Current Version:** v2.02 (2025-01-23)
+**Current Version:** v2.03 (2025-01-23)
 
 ## 📚 Documentation
 
@@ -10,13 +10,19 @@ A web-based PDF receipt parser specifically designed for Willys grocery store re
 - **[SHOPPING-LIST-GUIDE.md](SHOPPING-LIST-GUIDE.md)** - Comprehensive guide to the smart shopping list feature
 - **[FIXES-APPLIED.md](FIXES-APPLIED.md)** - v2.0-beta bug fixes documentation
 
-## 🆕 What's New in v2.02
+## 🆕 What's New in v2.03
 
-### Smart Shopping List
+### Improved Shopping List Accuracy
+- **Removed "Good Deal" Badge** - Was misleading as it was based on past prices, not current store prices
+- **Price Range Display** - Shows historical price range to help you make informed decisions
+- **Honest Suggestions** - No false claims about current pricing
+
+## Recent Updates (v2.02)
+
+### Smart Shopping List Features
 - **Autocomplete Add Item** - Search from your purchase history with live filtering
 - **Intelligent Suggestions** with multi-level urgency scoring (Critical/High/Due Soon)
 - **Complementary Items** - Detects items you buy together and suggests them contextually
-- **Price Awareness** - Shows good deals when prices are below your historical median
 - **Smart Sorting** - Priority based on urgency score and complementary relationships
 
 See [SHOPPING-LIST-GUIDE.md](SHOPPING-LIST-GUIDE.md) for complete details.
@@ -119,11 +125,11 @@ Now supports **3 different item formats**:
 - ✅ **Purchase patterns** - Understand weekly, bi-weekly, or monthly habits
 - ✅ **Sortable tables** - Sort by any column with pagination
 
-### Shopping List (v2.02)
+### Shopping List (v2.03)
 - ✅ **Smart suggestions** - AI-powered recommendations based on purchase history
 - ✅ **Urgency scoring** - Critical/High/Medium priority levels
 - ✅ **Complementary items** - Suggests items you buy together
-- ✅ **Price awareness** - Good deal detection from historical prices
+- ✅ **Price history** - Shows historical price ranges for informed decisions
 - ✅ **Autocomplete add** - Search from purchase history with product details
 - ✅ **Category grouping** - Items organized by store section
 - ✅ **Quantity control** - Adjust quantities with +/- buttons

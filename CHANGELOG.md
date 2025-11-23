@@ -1,5 +1,25 @@
 # Receipt Parser - Changelog
 
+## v2.03 - 2025-01-23
+
+### Removed Misleading "Good Deal" Feature
+
+**Problem:** The "Good Deal" badge was based on past purchase prices, not current prices.
+- Badge showed 💰 GOOD DEAL when recent purchases were below historical median
+- Misleading: Suggested buying now based on old prices, not current store prices
+- Willys website prices cannot be scraped (JavaScript-rendered, anti-scraping measures)
+- No way to validate if prices are actually good deals today
+
+**Solution:** Removed the feature entirely
+- Removed `isGoodDeal` calculation comparing recent vs median prices
+- Removed 💰 GOOD DEAL badge from suggestion display
+- Kept price range information: "~15.90 kr (range: 14.50 - 17.90 kr)"
+- Users can make their own informed decisions based on historical context
+
+**Impact:** More honest and accurate suggestions without false claims about current pricing.
+
+---
+
 ## v2.02 - 2025-01-23
 
 ### Smart Shopping List Features
@@ -206,7 +226,8 @@ See `FIXES-APPLIED.md` for detailed documentation:
 
 | Version | Date | Major Changes |
 |---------|------|---------------|
-| v2.02 | 2025-01-23 | Smart shopping list: autocomplete add item, intelligent suggestions with urgency scoring, complementary items, price awareness |
+| v2.03 | 2025-01-23 | Removed misleading "good deal" badge (based on past prices, not current) |
+| v2.02 | 2025-01-23 | Smart shopping list: autocomplete add item, intelligent suggestions with urgency scoring, complementary items |
 | v2.01 | 2025-01-23 | Tag filter accuracy fix |
 | v2.0 | 2025-01-23 | Official release, discount analysis improvements, quality checks, scroll fix |
 | v2.0-beta | 2025-01-21 | 7 major bug fixes |

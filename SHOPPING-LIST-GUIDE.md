@@ -29,7 +29,6 @@ The system automatically suggests items based on your purchase patterns.
 - 🔴 **CRITICAL** - Item is 50%+ overdue (you really need this!)
 - ⚠️ **HIGH** - Item is 20%+ overdue (probably need soon)
 - 🔵 **DUE SOON** - Approaching your typical purchase interval
-- 💰 **GOOD DEAL** - Recent prices are 5%+ below your historical median
 
 **Actions:**
 - **+ Add** - Adds item to your list with estimated price
@@ -126,29 +125,23 @@ Receipts show you often buy together:
 - Butter now shows: "🔗 Often bought with: Milk"
 - This helps you remember companion items
 
-#### 4. Price Awareness
+#### 4. Price History
 
-The system analyzes your price history:
+The system tracks your price history to help you make informed decisions:
 
-**Price Statistics:**
-- **Minimum** - Lowest price you've ever paid
-- **Maximum** - Highest price you've ever paid
-- **Median** - Middle price from all purchases
-- **Recent average** - Average of last 3 purchases
+**Price Display:**
+- **Average** - Your typical price paid for this item
+- **Range** - Shows min and max prices you've paid
+- **Format** - "~15.90 kr (range: 14.50 - 17.90 kr)"
 
-**Good Deal Detection:**
-- If recent average < median × 0.95 (5% below median)
-- Shows **💰 GOOD DEAL** badge
-- Suggests stocking up when prices are low
+This gives you historical context without making claims about current store prices, which we cannot verify.
 
 **Example:**
 ```
-Pasta (df) 500g
-Historical prices: 12.90, 13.50, 13.50, 13.90, 14.50, 15.00 kr
-Median: 13.70 kr
-Recent purchases: 12.90, 13.50, 13.50 kr
-Recent average: 13.30 kr
-13.30 < 13.70 × 0.95 (13.02) ✓ GOOD DEAL!
+Milk
+~15.90 kr (range: 14.50 - 17.90 kr)
+You've paid between 14.50-17.90 kr historically
+Average: 15.90 kr
 ```
 
 #### 5. Filtering Logic
@@ -194,10 +187,10 @@ Recent average: 13.30 kr
 - These are learned from YOUR shopping patterns
 - Helps prevent forgetting companion items
 
-### 6. Good Deal Alerts
-- Stock up when you see 💰 GOOD DEAL badge
-- Means current prices are below your typical price
-- Great for non-perishables you use regularly
+### 6. Price History
+- Use price ranges to make informed purchasing decisions
+- Compare in-store prices with your historical range
+- Know what you typically pay before shopping
 
 ---
 
@@ -207,7 +200,7 @@ Recent average: 13.30 kr
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ 🔴 Milk                [CRITICAL] [💰 GOOD DEAL]│
+│ 🔴 Milk                            [CRITICAL]   │
 │                                                 │
 │ Buy every 7 days • Last bought 12 days ago      │
 │ ~15.90 kr (range: 14.50 - 17.90 kr)            │
@@ -221,12 +214,11 @@ Recent average: 13.30 kr
 1. **Icon** - 🔴 Critical, ⚠️ High, 🔵 Due Soon
 2. **Product name**
 3. **Urgency badge** - CRITICAL, HIGH, or DUE SOON
-4. **Deal badge** - 💰 GOOD DEAL (if applicable)
-5. **Frequency** - How often you typically buy it
-6. **Days since** - Last purchase date
-7. **Price info** - Average and range
-8. **Complementary** - Items you buy together (if applicable)
-9. **Actions** - Add or Dismiss
+4. **Frequency** - How often you typically buy it
+5. **Days since** - Last purchase date
+6. **Price info** - Average and range (historical context)
+7. **Complementary** - Items you buy together (if applicable)
+8. **Actions** - Add or Dismiss
 
 ### Shopping List Item Anatomy
 
@@ -373,11 +365,10 @@ function generateSuggestions() {
       urgencyScore += 1
       complementaryItems.add(coBuyProduct)
 
-  // 5. Check prices
-  median = calculateMedian(allPrices)
-    recentAvg = average(last3Prices)
-    if recentAvg < median * 0.95:
-      isGoodDeal = true
+  // 5. Track price history
+  minPrice = min(allPrices)
+  maxPrice = max(allPrices)
+  avgPrice = average(allPrices)
 
   // 6. Filter and sort
   suggestions = filter(urgency >= MEDIUM OR hasComplementary)
@@ -409,7 +400,6 @@ function generateSuggestions() {
   avgPrice: 15.90,
   minPrice: 14.50,
   maxPrice: 17.90,
-  isGoodDeal: true,
   daysSince: 12,
   avgDaysBetween: 7,
   urgency: "critical",  // critical|high|medium|low
