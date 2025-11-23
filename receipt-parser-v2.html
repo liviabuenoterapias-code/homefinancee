@@ -3884,7 +3884,7 @@ function detectBrandCapitalizationIssues(product) {
   return null;
 }
 
-// Detect Product Type "Other" that should be "övrigt"
+// Detect Product Type "Other" that should be "övrigt" or capitalization issues
 function detectOtherProductType(product) {
   if (!product.productType) return null;
 
@@ -3896,6 +3896,19 @@ function detectOtherProductType(product) {
       current: { productType: product.productType },
       suggested: { productType: 'övrigt' },
       reason: 'Product Type "Other" should be changed to "övrigt" for Swedish consistency.',
+      confidence: 'high'
+    };
+  }
+
+  // Check if product type has uppercase letters (should be lowercase for consistency)
+  const lower = product.productType.toLowerCase();
+  if (product.productType !== lower) {
+    return {
+      type: 'productType_capitalization',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: lower },
+      reason: 'Product Type should be lowercase for consistency (e.g., "snacks" not "Snacks").',
       confidence: 'high'
     };
   }
