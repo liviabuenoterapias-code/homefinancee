@@ -1,0 +1,2754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grocery Receipt Parser & Analysis</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="product-categories.js"></script>
+<script src="analysis.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea, #764ba2); padding: 20px; }
+.container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 15px; padding: 40px; }
+h1 { color: #764ba2; text-align: center; margin-bottom: 30px; }
+.upload-box { background: #f5f5f5; border: 2px dashed #667eea; padding: 40px; text-align: center; cursor: pointer; border-radius: 10px; margin-bottom: 30px; }
+.upload-box:hover { background: #e8e8e8; }
+.btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 12px 25px; border-radius: 8px; cursor: pointer; margin: 5px; font-size: 14px; }
+.btn:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-delete { background: #dc3545; }
+.btn-export { background: #28a745; padding: 15px 40px; font-size: 16px; }
+.msg { padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; font-weight: bold; }
+.success { background: #d4edda; color: #155724; }
+.error { background: #f8d7da; color: #721c24; }
+.info { background: #d1ecf1; color: #0c5460; }
+.receipt-card { background: #f9f9f9; padding: 20px; margin-bottom: 15px; border-radius: 10px; border-left: 4px solid #667eea; }
+.receipt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0; }
+.receipt-info { flex: 1; }
+.receipt-date { font-size: 18px; font-weight: bold; color: #667eea; }
+.receipt-store { color: #666; margin-top: 5px; }
+.receipt-total { font-size: 24px; font-weight: bold; color: #764ba2; margin: 0 20px; }
+.items-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.items-table th { background: #e8e8e8; padding: 10px; text-align: left; font-size: 13px; color: #666; }
+.items-table td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+.items-table input { width: 100%; padding: 5px; border: 1px solid #ddd; border-radius: 3px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+.stat-card { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 20px; border-radius: 10px; text-align: center; }
+.stat-value { font-size: 32px; font-weight: bold; }
+.stat-label { font-size: 14px; margin-top: 5px; opacity: 0.9; }
+.progress { background: #e0e0e0; height: 8px; border-radius: 4px; margin: 10px 0; overflow: hidden; }
+.progress-bar { background: #28a745; height: 100%; transition: width 0.3s; }
+#receipts { margin-top: 30px; }
+
+/* Tab Styles */
+.tabs { display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; }
+.tab { padding: 15px 30px; cursor: pointer; background: none; border: none; font-size: 16px; color: #666; transition: all 0.3s; border-bottom: 3px solid transparent; }
+.tab:hover { color: #764ba2; }
+.tab.active { color: #764ba2; font-weight: bold; border-bottom-color: #764ba2; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Analysis Styles */
+.analysis-section { margin-bottom: 30px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f5f5f5; border-radius: 8px; cursor: pointer; margin-bottom: 10px; }
+.section-header:hover { background: #e8e8e8; }
+.section-title { font-size: 18px; font-weight: bold; color: #764ba2; }
+.section-content { padding: 20px; background: #f9f9f9; border-radius: 8px; margin-top: 10px; }
+.analysis-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+.analysis-table th { background: #667eea; color: white; padding: 12px; text-align: left; }
+.analysis-table th.sortable { cursor: pointer; user-select: none; }
+.analysis-table th.sortable:hover { background: #5568d3; }
+.analysis-table td { padding: 10px; border-bottom: 1px solid #e0e0e0; }
+.analysis-table tr:hover { background: #f0f0f0; cursor: pointer; }
+.chart-container { position: relative; height: 400px; margin: 20px 0; }
+.filters { display: flex; gap: 15px; margin-bottom: 20px; align-items: center; }
+.filter-label { font-weight: bold; color: #666; }
+select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+.insight-card { background: linear-gradient(135deg, #28a745, #20c997); color: white; padding: 15px; border-radius: 8px; margin: 10px 0; }
+.insight-icon { font-size: 24px; margin-right: 10px; }
+.detail-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); max-width: 800px; max-height: 80vh; overflow-y: auto; z-index: 1000; display: none; }
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 999; display: none; }
+.close-modal { float: right; font-size: 28px; cursor: pointer; color: #999; }
+.close-modal:hover { color: #333; }
+.product-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+.product-table th { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 15px; text-align: left; font-weight: 600; position: sticky; top: 0; }
+.product-table td { padding: 12px; border-bottom: 1px solid #eee; }
+.product-table tr:hover { background: #f9f9f9; }
+.product-table input, .product-table select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+.product-table input:focus, .product-table select:focus { border-color: #667eea; outline: none; }
+.product-count { background: #667eea; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.edit-indicator { color: #28a745; font-size: 12px; margin-left: 5px; }
+.reset-btn { background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.reset-btn:hover { background: #c82333; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛒 Grocery Receipt Parser & Analysis</h1>
+
+  <!-- Tab Navigation -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('parser')">📄 Parse Receipts</button>
+    <button class="tab" onclick="switchTab('analysis')">📊 Analysis</button>
+    <button class="tab" onclick="switchTab('products')">🏷️ Product Library</button>
+  </div>
+
+  <!-- Parser Tab -->
+  <div id="parser-tab" class="tab-content active">
+    <div style="text-align: center; margin-bottom: 20px;">
+      <label style="display: inline-flex; align-items: center; cursor: pointer; background: #f5f5f5; padding: 10px 20px; border-radius: 5px;">
+        <input type="checkbox" id="debugMode" style="margin-right: 10px;">
+        <span>🐛 Debug Mode (shows parsing details)</span>
+      </label>
+    </div>
+
+    <div class="upload-box" onclick="document.getElementById('fileInput').click()">
+    <div style="font-size: 48px; margin-bottom: 10px;">📄</div>
+    <h3>Click to Upload Multiple PDF Receipts</h3>
+    <p style="color: #666; margin-top: 10px;">Select all your Willys receipts at once</p>
+    <input type="file" id="fileInput" accept=".pdf" multiple style="display:none;">
+  </div>
+
+  <div id="statusMsg"></div>
+  <div id="progress" style="display:none;">
+    <p id="progressText" style="text-align: center; margin-bottom: 10px;">Processing receipts...</p>
+    <div class="progress">
+      <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+    </div>
+  </div>
+
+  <div id="stats" style="display:none;">
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="statReceipts">0</div>
+        <div class="stat-label">Receipts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statItems">0</div>
+        <div class="stat-label">Products (Items)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statSpent">0 kr</div>
+        <div class="stat-label">Total Spent</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statSaved">0 kr</div>
+        <div class="stat-label">Total Saved</div>
+      </div>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 30px;">
+      <button class="btn btn-export" onclick="exportToCSV()">📊 Export All to CSV</button>
+      <button class="btn" onclick="clearAll()" style="background: #dc3545;">🗑️ Clear All Receipts</button>
+    </div>
+  </div>
+
+  <div id="receipts"></div>
+  </div>
+  <!-- End Parser Tab -->
+
+  <!-- Analysis Tab -->
+  <div id="analysis-tab" class="tab-content">
+    <div id="analysis-content">
+      <div style="text-align: center; padding: 60px 20px; color: #999;">
+        <div style="font-size: 64px; margin-bottom: 20px;">📊</div>
+        <h2>No Data Yet</h2>
+        <p style="margin-top: 10px;">Upload some receipts in the Parse tab first!</p>
+      </div>
+    </div>
+  </div>
+  <!-- End Analysis Tab -->
+
+  <!-- Product Library Tab -->
+  <div id="products-tab" class="tab-content">
+    <div style="margin-bottom: 20px;">
+      <h2>🏷️ Product Library</h2>
+      <p style="color: #666; margin: 10px 0;">Review and edit how products are named and categorized. Your custom mappings will be saved and used in analysis.</p>
+
+      <!-- Category Management -->
+      <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <strong>📁 Categories:</strong>
+          <input type="text" id="newCategoryInput" placeholder="New category name..." style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <button onclick="handleAddCategory()" class="btn" style="padding: 8px 20px; background: #28a745;">+ Add Category</button>
+          <button onclick="showCategoryManager()" class="btn" style="padding: 8px 20px;">Manage Categories</button>
+        </div>
+        <div id="categoryHint" style="font-size: 12px; color: #666;">
+          Type a new category name and click Add. You can then assign products to your custom categories.
+        </div>
+      </div>
+
+      <!-- Tag Management -->
+      <div style="background: #e8f4f8; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <strong>🏷️ Tags:</strong>
+          <button onclick="showTagManager()" class="btn" style="padding: 8px 20px; background: #667eea;">Manage Tags</button>
+        </div>
+        <div style="font-size: 12px; color: #666; margin-top: 8px;">
+          View, rename, and delete tags. Tags help you organize products across multiple dimensions.
+        </div>
+      </div>
+
+      <!-- Backup & Restore -->
+      <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <strong>💾 Backup & Restore:</strong>
+          <button onclick="exportCustomData()" class="btn" style="padding: 8px 20px; background: #007bff;">📥 Export Data</button>
+          <button onclick="document.getElementById('importFileInput').click()" class="btn" style="padding: 8px 20px; background: #6c757d;">📤 Import Data</button>
+          <input type="file" id="importFileInput" accept=".json" onchange="importCustomData(event)" style="display: none;">
+        </div>
+        <div style="font-size: 12px; color: #856404;">
+          💡 Export saves your custom categories, tags, and product mappings to a JSON file. Import to restore them later.
+        </div>
+      </div>
+
+      <div style="margin-top: 15px;">
+        <input type="text" id="productSearch" placeholder="🔍 Search products..." style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+      </div>
+    </div>
+    <div id="product-library-content">
+      <div style="text-align: center; padding: 60px 20px; color: #999;">
+        <div style="font-size: 64px; margin-bottom: 20px;">🏷️</div>
+        <h2>No Products Yet</h2>
+        <p style="margin-top: 10px;">Upload some receipts in the Parse tab first!</p>
+      </div>
+    </div>
+  </div>
+  <!-- End Product Library Tab -->
+
+  <!-- Product Detail Modal -->
+  <div id="modal-overlay" class="modal-overlay" onclick="closeModal()"></div>
+  <div id="product-modal" class="detail-modal">
+    <div id="modal-content"></div>
+  </div>
+
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let allReceipts = [];
+
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('groceryReceipts');
+  if (saved) {
+    allReceipts = JSON.parse(saved);
+    if (allReceipts.length > 0) {
+      displayAllReceipts();
+    }
+  }
+});
+
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files).filter(f => f.type === 'application/pdf');
+  if (files.length === 0) {
+    showMessage('Please upload PDF files only', 'error');
+    return;
+  }
+
+  document.getElementById('progress').style.display = 'block';
+  document.getElementById('progressBar').style.width = '0%';
+
+  for (let i = 0; i < files.length; i++) {
+    document.getElementById('progressText').textContent = `Processing ${i + 1} of ${files.length}...`;
+    document.getElementById('progressBar').style.width = `${((i + 1) / files.length) * 100}%`;
+
+    await processPDF(files[i]);
+  }
+
+  document.getElementById('progress').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+
+  saveReceipts();
+  displayAllReceipts();
+  showMessage(`Successfully processed ${files.length} receipt(s)!`, 'success');
+});
+
+async function processPDF(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      // Add page break marker between pages
+      if (pageNum > 1) {
+        fullText += '\n';
+      }
+
+      let lastY = null;
+      let lastX = null;
+      textContent.items.forEach(item => {
+        const x = item.transform[4];
+        const y = item.transform[5];
+
+        // Detect new line: Y coordinate changed OR X jumped back to left margin
+        if (lastY !== null) {
+          const yDiff = Math.abs(y - lastY);
+          const xJumpedBack = lastX !== null && x < lastX - 50; // X moved significantly left
+
+          if (yDiff > 2 || xJumpedBack) {
+            fullText += '\n';
+          }
+        }
+
+        fullText += item.str + ' ';
+        lastY = y;
+        lastX = x;
+      });
+    }
+
+    const receipt = parseReceiptText(fullText, file.name);
+
+    // Check if we already have this receipt (by date/time/total)
+    const exists = allReceipts.find(r =>
+      r.date === receipt.date &&
+      r.time === receipt.time &&
+      Math.abs(r.totalAmount - receipt.totalAmount) < 0.01
+    );
+
+    if (!exists) {
+      allReceipts.push(receipt);
+    } else {
+      console.log('Duplicate receipt detected, skipping');
+    }
+
+  } catch (error) {
+    console.error('Error processing', file.name, ':', error);
+  }
+}
+
+function parseReceiptText(text, filename) {
+  const receipt = {
+    id: Date.now() + Math.random(),
+    filename: filename,
+    store: '',
+    date: '',
+    time: '',
+    items: [],
+    totalAmount: 0,
+    totalDiscount: 0,
+    debugInfo: [] // For debugging
+  };
+
+  const lines = text.split('\n').map(l => l.trim());
+
+  // Extract store - look for Willys store name (not discount lines)
+  for (let line of lines) {
+    const lower = line.toLowerCase();
+    // Match "Willys" but NOT "Willys Plus:" (discount line)
+    if (lower.includes('willys') && !lower.includes('willys plus:') && !lower.includes('rabatt')) {
+      receipt.store = line;
+      break;
+    }
+  }
+  if (!receipt.store) {
+    // Fallback to first substantial line
+    for (let line of lines) {
+      if (line && !line.includes('---') && !line.includes('===') && line.length > 2 && line.length < 50) {
+        receipt.store = line;
+        break;
+      }
+    }
+  }
+
+  // Extract date - various formats
+  const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) receipt.date = dateMatch[1];
+
+  // Extract time
+  const timeMatch = text.match(/(\d{2}:\d{2})/);
+  if (timeMatch) receipt.time = timeMatch[1];
+
+  // Extract total - more flexible and robust
+  // Try multiple patterns for total
+  let totalMatch = text.match(/Totalt[:\s]+([\d\s]+)[,]([\d]{2})\s*(?:SEK|kr)/i);
+  if (totalMatch) {
+    // Format: "Totalt 1 234,56 SEK" -> extract as "1234.56"
+    const wholePart = totalMatch[1].replace(/\s/g, '');
+    const decimalPart = totalMatch[2];
+    receipt.totalAmount = parseFloat(wholePart + '.' + decimalPart);
+  } else {
+    // Fallback: simpler pattern
+    totalMatch = text.match(/Totalt\s+([\d,\s]+)\s*(?:SEK|kr)?/i);
+    if (totalMatch) {
+      receipt.totalAmount = parseFloat(totalMatch[1].replace(',', '.').replace(/\s/g, ''));
+    }
+  }
+
+  // Parse items - IMPROVED SECTION DETECTION
+  let inScanSection = false;
+  let startIndex = -1;
+  let endIndex = lines.length;
+
+  // Find start and end markers more flexibly
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+
+    // Start markers
+    if (line.includes('start') && (line.includes('sj') || line.includes('scanning'))) {
+      startIndex = i + 1;
+      inScanSection = true;
+    }
+
+    // End markers
+    if (inScanSection && (line.includes('slut') || line.includes('summa') || line.includes('totalt'))) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  // If no clear section found, try to parse the whole middle section
+  if (startIndex === -1) {
+    startIndex = 5; // Skip header
+    endIndex = lines.length - 10; // Skip footer
+  }
+
+  let lastItem = null;
+  const debugMode = document.getElementById('debugMode')?.checked || false;
+
+  // IMPROVED ITEM MATCHING - Multiple patterns
+  for (let i = startIndex; i < endIndex; i++) {
+    const line = lines[i];
+    if (!line || line.length < 3) continue;
+
+    let matched = false;
+    let pattern = '';
+
+    // Skip obvious non-item lines
+    if (line.match(/^(=+|-+|Kvitto|Butik|Datum|Tid|Kassa|Org)/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (header/separator)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for "Nytt pris" - can be discount or just price change
+    if (line.match(/Nytt pris/i)) {
+      const discountMatch = line.match(/-([\d,]+)/);
+      if (discountMatch && lastItem) {
+        // Has negative amount = discount
+        const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
+        lastItem.discount += discount;
+        receipt.totalDiscount += discount;
+        matched = true;
+        pattern = 'Discount (Nytt pris)';
+      } else {
+        // No negative amount = just price change notification, skip it
+        pattern = 'Skipped (price change)';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // Skip standalone "Willys Plus:" lines (discount header)
+    if (line.trim() === 'Willys Plus:') {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (discount header)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for discount/coupon lines FIRST
+    if (line.match(/rabatt|neds|willys\s*plus:|nedsättning|kupong:/i)) {
+      const discountMatch = line.match(/-([\d,]+)/);
+      if (discountMatch && lastItem) {
+        const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
+        lastItem.discount += discount;
+        receipt.totalDiscount += discount;
+        matched = true;
+        pattern = 'Discount';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // Skip payment/card lines
+    if (line.match(/betalt|kort|swish|kontant|kort\s*nr/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (payment)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for PANT (bottle deposit) - add to previous item, don't create new item
+    if (line.match(/^\+PANT/i)) {
+      const pantMatch = line.match(/^\+PANT.*?\s+([\d,]+)\s*$/i);
+      if (pantMatch && lastItem) {
+        const pantAmount = parseFloat(pantMatch[1].replace(',', '.'));
+        lastItem.totalPrice += pantAmount;
+        // Update unit price if quantity > 1
+        if (lastItem.quantity > 1) {
+          lastItem.unitPrice = lastItem.totalPrice / lastItem.quantity;
+        } else {
+          lastItem.unitPrice = lastItem.totalPrice;
+        }
+        matched = true;
+        pattern = 'PANT (added to previous item)';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
+    // Supports: JUICE 1.75L 2st*34,90 69,80, BIG KIDS +6 ÅR 2st*20,90 41,80, etc.
+    let itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const qty = parseInt(itemMatch[2]);
+      const unitPrice = parseFloat(itemMatch[3].replace(',', '.'));
+      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+      lastItem = {
+        name: name,
+        quantity: qty,
+        unitPrice: unitPrice,
+        totalPrice: totalPrice,
+        discount: 0
+      };
+      receipt.items.push(lastItem);
+      matched = true;
+      pattern = 'Pattern 1 (Qty*Price)';
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 2: Simple format - NAME PRICE (no quantity)
+    // Supports: +PANT ENG PET <=1L 1,00, FISH & CRISP 55,80, ?PPLE (encoding issue), etc.
+    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const price = parseFloat(itemMatch[2].replace(',', '.'));
+
+      // Validate: name should be at least 3 chars, price should be reasonable (0.01 to 9999)
+      if (name.length >= 3 && price >= 0.01 && price <= 9999) {
+        // Skip if it looks like a total/sum line
+        if (!name.match(/^(totalt|summa|att\s*betala|moms|subtotal)/i)) {
+          lastItem = {
+            name: name,
+            quantity: 1,
+            unitPrice: price,
+            totalPrice: price,
+            discount: 0
+          };
+          receipt.items.push(lastItem);
+          matched = true;
+          pattern = 'Pattern 2 (Simple)';
+        } else {
+          pattern = 'Skipped (total line)';
+        }
+      } else {
+        pattern = 'Failed validation';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 3: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
+    itemMatch = line.match(/^([\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,<>=][\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const weight = parseFloat(itemMatch[2].replace(',', '.'));
+      const pricePerKg = parseFloat(itemMatch[3].replace(',', '.'));
+      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+      lastItem = {
+        name: name,
+        quantity: 1,
+        unitPrice: totalPrice,
+        totalPrice: totalPrice,
+        discount: 0,
+        weight: weight,
+        pricePerKg: pricePerKg,
+        isWeightBased: true
+      };
+      receipt.items.push(lastItem);
+      matched = true;
+      pattern = 'Pattern 3 (Weight)';
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 4: Weight info on separate line - check next line (or next 2 lines for 3-line format)
+    // Matches: "PRÄST MELLAN" followed by "0,732kg*134,90kr/kg 98,75"
+    // OR: "GOUDA 28%" + "Willys Plus:" + "1,217kg*85,90kr/kg 104,54"
+    if (i + 1 < endIndex) {
+      let nextLine = lines[i + 1];
+      let weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+
+      // Check if next line is "Willys Plus:" and weight info is on i+2
+      let skipLines = 1;
+      if (!weightLineMatch && i + 2 < endIndex && nextLine?.trim() === 'Willys Plus:') {
+        nextLine = lines[i + 2];
+        weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+        skipLines = 2;
+      }
+
+      if (weightLineMatch && line.match(/^[\wåäöÅÄÖéèêëàâïîôùûçÉÈÊËÀÂÏÎÔÙÛÇ&.+?,\s\/%-<>=]+$/i)) {
+        const name = line.trim();
+        const weight = parseFloat(weightLineMatch[1].replace(',', '.'));
+        const pricePerKg = parseFloat(weightLineMatch[2].replace(',', '.'));
+        const totalPrice = parseFloat(weightLineMatch[3].replace(',', '.'));
+
+        lastItem = {
+          name: name,
+          quantity: 1,
+          unitPrice: totalPrice,
+          totalPrice: totalPrice,
+          discount: 0,
+          weight: weight,
+          pricePerKg: pricePerKg,
+          isWeightBased: true
+        };
+        receipt.items.push(lastItem);
+        matched = true;
+        pattern = skipLines === 2 ? 'Pattern 4 (3-line weight)' : 'Pattern 4 (Multi-line weight)';
+        if (debugMode) {
+          receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+          if (skipLines === 2) {
+            receipt.debugInfo.push({ lineNum: i + 1, line: lines[i + 1], matched: true, pattern: 'Pattern 4 (discount header)', startIndex, endIndex });
+          }
+          receipt.debugInfo.push({ lineNum: i + skipLines, line: nextLine, matched: true, pattern: 'Pattern 4 (weight line)', startIndex, endIndex });
+        }
+        i += skipLines; // Skip the consumed lines
+        continue;
+      }
+    }
+
+    // PATTERN 5: Just weight line (continuation from previous)
+    // Skip if it looks like a weight continuation line
+    if (line.match(/^[\d,]+\s*kg\s*\*\s*[\d,]+\s*kr\/kg\s+[\d,]+\s*$/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (weight continuation)', startIndex, endIndex });
+      continue;
+    }
+
+    // No pattern matched
+    if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'No pattern matched', startIndex, endIndex });
+  }
+
+  return receipt;
+}
+
+function displayAllReceipts() {
+  if (allReceipts.length === 0) {
+    document.getElementById('stats').style.display = 'none';
+    document.getElementById('receipts').innerHTML = '';
+    return;
+  }
+
+  // Sort by date/time (newest first)
+  allReceipts.sort((a, b) => {
+    const dateA = new Date(a.date + ' ' + a.time);
+    const dateB = new Date(b.date + ' ' + b.time);
+    return dateB - dateA;
+  });
+
+  // Update stats
+  const totalProducts = allReceipts.reduce((sum, r) => sum + r.items.length, 0);
+  const totalItems = allReceipts.reduce((sum, r) => {
+    return sum + r.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+  }, 0);
+  const totalSpent = allReceipts.reduce((sum, r) => sum + r.totalAmount, 0);
+  const totalSaved = allReceipts.reduce((sum, r) => sum + r.totalDiscount, 0);
+
+  document.getElementById('statReceipts').textContent = allReceipts.length;
+  document.getElementById('statItems').textContent = `${totalProducts} (${totalItems})`;
+  document.getElementById('statSpent').textContent = totalSpent.toFixed(0) + ' kr';
+  document.getElementById('statSaved').textContent = totalSaved.toFixed(0) + ' kr';
+  document.getElementById('stats').style.display = 'block';
+
+  // Display receipts
+  const container = document.getElementById('receipts');
+  container.innerHTML = allReceipts.map((receipt, index) => {
+    // Calculate total items (sum of quantities)
+    const totalItemCount = receipt.items.reduce((sum, item) => sum + item.quantity, 0);
+    const productCount = receipt.items.length;
+
+    return `
+    <div class="receipt-card">
+      <div class="receipt-header">
+        <div class="receipt-info">
+          <div class="receipt-date">${receipt.date} ${receipt.time}</div>
+          <div class="receipt-store">${receipt.store} • ${productCount} products (${totalItemCount} items)</div>
+        </div>
+        <div class="receipt-total">${receipt.totalAmount.toFixed(2)} kr</div>
+        <button class="btn btn-delete" onclick="deleteReceipt(${index})">🗑️ Delete</button>
+      </div>
+
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th style="width: 50%">Item Name (editable)</th>
+            <th style="width: 10%">Qty</th>
+            <th style="width: 15%">Unit Price</th>
+            <th style="width: 15%">Total</th>
+            <th style="width: 10%">Discount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${receipt.items.map((item, itemIndex) => `
+            <tr>
+              <td><input type="text" value="${item.name}" onchange="updateItemName(${index}, ${itemIndex}, this.value)"></td>
+              <td style="text-align: center;">${item.quantity}</td>
+              <td style="text-align: right;">${item.unitPrice.toFixed(2)}</td>
+              <td style="text-align: right;">${item.totalPrice.toFixed(2)}</td>
+              <td style="text-align: right;">${item.discount > 0 ? '-' + item.discount.toFixed(2) : '0.00'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      ${receipt.debugInfo && receipt.debugInfo.length > 0 ? `
+        <details style="margin-top: 15px; background: #fff3cd; padding: 15px; border-radius: 5px;">
+          <summary style="cursor: pointer; font-weight: bold; color: #856404;">🐛 Debug Info (click to expand)</summary>
+          <div style="margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;">
+            <div><strong>Section:</strong> Lines ${receipt.debugInfo[0]?.startIndex} to ${receipt.debugInfo[0]?.endIndex}</div>
+            ${receipt.debugInfo.map(info => `
+              <div style="margin-top: 5px; padding: 5px; background: ${info.matched ? '#d4edda' : '#f8d7da'};">
+                <strong>Line ${info.lineNum}:</strong> "${info.line}"
+                ${info.matched ? '✓ Matched as: ' + info.pattern : '✗ No match'}
+              </div>
+            `).join('')}
+          </div>
+        </details>
+      ` : ''}
+    </div>
+  `;
+  }).join('');
+}
+
+function updateItemName(receiptIndex, itemIndex, newName) {
+  allReceipts[receiptIndex].items[itemIndex].name = newName;
+  saveReceipts();
+}
+
+function deleteReceipt(index) {
+  if (confirm('Delete this receipt?')) {
+    allReceipts.splice(index, 1);
+    saveReceipts();
+    displayAllReceipts();
+    showMessage('Receipt deleted', 'info');
+  }
+}
+
+function clearAll() {
+  if (confirm('Delete ALL receipts? This cannot be undone!')) {
+    allReceipts = [];
+    saveReceipts();
+    displayAllReceipts();
+    showMessage('All receipts cleared', 'info');
+  }
+}
+
+function saveReceipts() {
+  localStorage.setItem('groceryReceipts', JSON.stringify(allReceipts));
+}
+
+function exportToCSV() {
+  if (allReceipts.length === 0) {
+    showMessage('No receipts to export', 'error');
+    return;
+  }
+
+  let csv = 'Receipt ID,Store,Date,Time,Item Name,Quantity,Unit Price,Total Price,Discount,Receipt Total,Receipt Total Discount\n';
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      csv += `"${receipt.id}","${receipt.store}","${receipt.date}","${receipt.time}",`;
+      csv += `"${item.name}",${item.quantity},${item.unitPrice.toFixed(2)},${item.totalPrice.toFixed(2)},${item.discount.toFixed(2)},`;
+      csv += `${receipt.totalAmount.toFixed(2)},${receipt.totalDiscount.toFixed(2)}\n`;
+    });
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+
+  link.href = url;
+  link.download = `grocery_receipts_${new Date().toISOString().split('T')[0]}.csv`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  showMessage('CSV exported successfully!', 'success');
+}
+
+function showMessage(msg, type) {
+  const div = document.getElementById('statusMsg');
+  div.className = 'msg ' + type;
+  div.textContent = msg;
+  div.style.display = 'block';
+
+  setTimeout(() => {
+    div.style.display = 'none';
+  }, 5000);
+}
+
+// Tab switching function
+function switchTab(tabName) {
+  // Hide all tabs
+  document.querySelectorAll('.tab-content').forEach(tab => {
+    tab.classList.remove('active');
+  });
+
+  // Remove active from all tab buttons
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.classList.remove('active');
+  });
+
+  // Show selected tab
+  document.getElementById(tabName + '-tab').classList.add('active');
+
+  // Activate button
+  event.target.classList.add('active');
+
+  // If switching to analysis, refresh it
+  if (tabName === 'analysis') {
+    refreshAnalysis();
+  }
+
+  // If switching to products, refresh product library
+  if (tabName === 'products') {
+    if (allReceipts.length > 0) {
+      renderProductLibrary();
+    }
+  }
+}
+
+// Analysis functions
+let analysisInstance = null;
+let modalNavigationContext = null; // Track where we came from (e.g., {type: 'tag', tag: 'coffee'})
+
+function refreshAnalysis() {
+  if (!allReceipts || allReceipts.length === 0) {
+    document.getElementById('analysis-content').innerHTML = `
+      <div style="text-align: center; padding: 60px 20px; color: #999;">
+        <div style="font-size: 64px; margin-bottom: 20px;">📊</div>
+        <h2>No Data Yet</h2>
+        <p style="margin-top: 10px;">Upload some receipts in the Parse tab first!</p>
+      </div>
+    `;
+    return;
+  }
+
+  analysisInstance = new GroceryAnalysis(allReceipts);
+  const summary = analysisInstance.getSummaryStats();
+
+  document.getElementById('analysis-content').innerHTML = `
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value">${summary.receiptCount}</div>
+        <div class="stat-label">Receipts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${summary.productCount}</div>
+        <div class="stat-label">Unique Products</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${summary.totalSpent.toFixed(0)} kr</div>
+        <div class="stat-label">Total Spent</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${summary.totalSaved.toFixed(0)} kr</div>
+        <div class="stat-label">Total Saved</div>
+      </div>
+    </div>
+
+    <div style="text-align: center; margin: 20px 0; color: #666;">
+      <p><strong>Period:</strong> ${summary.dateRange.start} to ${summary.dateRange.end} (${summary.monthCount} months)</p>
+    </div>
+
+    <div id="trends-section"></div>
+    <div id="tag-filter-section"></div>
+    <div id="staples-section"></div>
+    <div id="categories-section"></div>
+    <div id="discounts-section"></div>
+  `;
+
+  renderTrends();
+  renderTagFilter();
+  renderStaples();
+  renderCategories();
+  renderDiscounts();
+}
+
+// Get all unique tags from all products
+function getAllTags() {
+  const customMappings = loadCustomMappings();
+  const allTags = new Set();
+
+  Object.values(customMappings).forEach(mapping => {
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => allTags.add(tag));
+    }
+  });
+
+  return Array.from(allTags).sort();
+}
+
+// Show products with a specific tag
+function showProductsByTag(tag) {
+  const customMappings = loadCustomMappings();
+
+  // Find all products with this tag
+  const productNames = new Set();
+  Object.entries(customMappings).forEach(([rawName, mapping]) => {
+    if (mapping.tags && mapping.tags.includes(tag)) {
+      // Get the standardized name for this product
+      const standardName = mapping.standardName || window.ProductCategories.standardizeProduct(rawName);
+      productNames.add(standardName);
+    }
+  });
+
+  if (productNames.size === 0) {
+    alert(`No products found with tag "${tag}"`);
+    return;
+  }
+
+  // Get purchase data for these products
+  const productsData = [];
+  productNames.forEach(productName => {
+    const history = analysisInstance.getPriceHistory(productName);
+    if (history) {
+      const totalQuantity = history.purchases.reduce((sum, p) => sum + p.quantity, 0);
+      const totalSpent = history.purchases.reduce((sum, p) => sum + p.totalPrice, 0);
+      const totalDiscount = history.purchases.reduce((sum, p) => sum + p.discount, 0);
+
+      productsData.push({
+        name: productName,
+        category: history.category,
+        totalQuantity,
+        totalSpent,
+        totalDiscount,
+        purchases: history.purchases.length
+      });
+    }
+  });
+
+  // Sort by total spent
+  productsData.sort((a, b) => b.totalSpent - a.totalSpent);
+
+  // Calculate totals
+  const totalSpent = productsData.reduce((sum, p) => sum + p.totalSpent, 0);
+  const totalQuantity = productsData.reduce((sum, p) => sum + p.totalQuantity, 0);
+  const totalDiscount = productsData.reduce((sum, p) => sum + p.totalDiscount, 0);
+
+  // Display in modal
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🏷️ Products tagged with "${tag}"</h2>
+    <p style="color: #666; margin-bottom: 20px;">${productsData.length} products found</p>
+
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL QUANTITY</div>
+        <div style="font-size: 24px; font-weight: bold;">${totalQuantity}</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL SPENT</div>
+        <div style="font-size: 24px; font-weight: bold; color: #667eea;">${totalSpent.toFixed(2)} kr</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL SAVED</div>
+        <div style="font-size: 24px; font-weight: bold; color: #28a745;">${totalDiscount.toFixed(2)} kr</div>
+      </div>
+    </div>
+
+    <div style="max-height: 400px; overflow-y: auto;">
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Category</th>
+            <th>Total Qty</th>
+            <th>Total Spent</th>
+            <th>Purchases</th>
+            <th>Discounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${productsData.map(p => `
+            <tr style="cursor: pointer;" onclick="showProductDetailFromTag('${p.name.replace(/'/g, "\\'")}', '${tag}')">
+              <td><strong>${p.name}</strong></td>
+              <td>${p.category}</td>
+              <td>${p.totalQuantity}</td>
+              <td>${p.totalSpent.toFixed(2)} kr</td>
+              <td>${p.purchases} times</td>
+              <td style="color: ${p.totalDiscount > 0 ? '#28a745' : '#999'};">
+                ${p.totalDiscount > 0 ? '-' + p.totalDiscount.toFixed(2) + ' kr' : 'None'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Render tag filter section
+function renderTagFilter() {
+  const tags = getAllTags();
+
+  if (tags.length === 0) {
+    document.getElementById('tag-filter-section').innerHTML = '';
+    return;
+  }
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('tag-filter-content')">
+        <span class="section-title">🏷️ Filter by Tags</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="tag-filter-content" class="section-content">
+        <p style="margin-bottom: 15px; color: #666;">Click on a tag to see all products with that tag</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+          ${tags.map(tag => `
+            <button
+              onclick="showProductsByTag('${tag}')"
+              class="btn"
+              style="background: linear-gradient(135deg, #28a745, #20c997); padding: 8px 16px; font-size: 14px; display: inline-flex; align-items: center; gap: 6px;">
+              🏷️ ${tag}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('tag-filter-section').innerHTML = html;
+}
+
+function renderTrends() {
+  // Get monthly spending data
+  const months = Object.keys(analysisInstance.processed.months).sort();
+  const monthlyData = months.map(month => {
+    const purchases = analysisInstance.processed.months[month];
+    const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
+    const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
+    const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
+    return {
+      month,
+      totalSpent,
+      totalSaved,
+      itemCount,
+      uniqueProducts: new Set(purchases.map(p => p.standardName)).size
+    };
+  });
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('trends-content')">
+        <span class="section-title">📈 Spending & Price Trends</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="trends-content" class="section-content">
+
+        <!-- Monthly Spending Chart -->
+        <h3 style="margin-bottom: 15px;">Monthly Spending Overview</h3>
+        <div class="chart-container" style="height: 300px;">
+          <canvas id="monthlySpendingChart"></canvas>
+        </div>
+
+        <!-- Monthly Stats Table -->
+        <table class="analysis-table" style="margin-top: 20px;">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Total Spent</th>
+              <th>Discounts</th>
+              <th>Items Purchased</th>
+              <th>Unique Products</th>
+              <th>Avg per Item</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${monthlyData.map(m => `
+              <tr>
+                <td><strong>${m.month}</strong></td>
+                <td>${m.totalSpent.toFixed(2)} kr</td>
+                <td style="color: #28a745;">-${m.totalSaved.toFixed(2)} kr</td>
+                <td>${m.itemCount}</td>
+                <td>${m.uniqueProducts}</td>
+                <td>${(m.totalSpent / m.itemCount).toFixed(2)} kr</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('trends-section').innerHTML = html;
+
+  // Create monthly spending chart
+  setTimeout(() => {
+    const ctx = document.getElementById('monthlySpendingChart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: monthlyData.map(m => m.month),
+          datasets: [
+            {
+              label: 'Total Spent (kr)',
+              data: monthlyData.map(m => m.totalSpent),
+              borderColor: '#667eea',
+              backgroundColor: 'rgba(102, 126, 234, 0.1)',
+              tension: 0.4,
+              fill: true
+            },
+            {
+              label: 'Discounts Saved (kr)',
+              data: monthlyData.map(m => m.totalSaved),
+              borderColor: '#28a745',
+              backgroundColor: 'rgba(40, 167, 69, 0.1)',
+              tension: 0.4,
+              fill: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top'
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr';
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return value + ' kr';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+  }, 100);
+}
+
+// Sorting state for staples table
+let staplesSortConfig = {
+  column: 'totalSpent',  // Default sort by total spent
+  direction: 'desc'
+};
+
+function sortStaples(column) {
+  // Toggle direction if clicking the same column, otherwise default to desc
+  if (staplesSortConfig.column === column) {
+    staplesSortConfig.direction = staplesSortConfig.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    staplesSortConfig.column = column;
+    staplesSortConfig.direction = 'desc';
+  }
+  renderStaples();
+}
+
+function renderStaples() {
+  const staples = analysisInstance.getStapleProducts(0.7);
+
+  // Sort the staples based on current config
+  const sortedStaples = [...staples].sort((a, b) => {
+    let aVal, bVal;
+
+    switch (staplesSortConfig.column) {
+      case 'name':
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+        return staplesSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'category':
+        aVal = a.category.toLowerCase();
+        bVal = b.category.toLowerCase();
+        return staplesSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'frequency':
+        aVal = a.frequency;
+        bVal = b.frequency;
+        break;
+      case 'totalQuantity':
+        aVal = a.totalQuantity;
+        bVal = b.totalQuantity;
+        break;
+      case 'totalSpent':
+        aVal = a.totalSpent;
+        bVal = b.totalSpent;
+        break;
+      case 'avgPrice':
+        aVal = a.avgPrice;
+        bVal = b.avgPrice;
+        break;
+      case 'totalSavings':
+        aVal = a.totalSavings;
+        bVal = b.totalSavings;
+        break;
+      default:
+        return 0;
+    }
+
+    return staplesSortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+
+  // Helper function to render sort indicator
+  const sortIndicator = (column) => {
+    if (staplesSortConfig.column === column) {
+      return staplesSortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return '';
+  };
+
+  // Pre-build tag lookup map to avoid rebuilding product library multiple times
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const tagLookupMap = {};
+
+  // Build tag map once
+  sortedStaples.forEach(item => {
+    const allTags = new Set();
+    const matchingProducts = productLibrary.filter(p => p.standardName === item.name);
+    matchingProducts.forEach(product => {
+      const mapping = customMappings[product.rawName];
+      if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+        mapping.tags.forEach(tag => allTags.add(tag));
+      }
+    });
+    tagLookupMap[item.name] = Array.from(allTags).sort();
+  });
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('staples-content')">
+        <span class="section-title">🛒 Staple Products (Purchased Regularly)</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="staples-content" class="section-content">
+        <p style="margin-bottom: 15px; color: #666;">Products purchased in ${sortedStaples.length > 0 ? sortedStaples[0].totalMonths : 0} months</p>
+
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th class="sortable" onclick="sortStaples('name')">Product${sortIndicator('name')}</th>
+              <th class="sortable" onclick="sortStaples('category')">Category${sortIndicator('category')}</th>
+              <th class="sortable" onclick="sortStaples('frequency')">Frequency${sortIndicator('frequency')}</th>
+              <th class="sortable" onclick="sortStaples('totalQuantity')">Total Units${sortIndicator('totalQuantity')}</th>
+              <th class="sortable" onclick="sortStaples('totalSpent')">Total Spent${sortIndicator('totalSpent')}</th>
+              <th class="sortable" onclick="sortStaples('avgPrice')">Avg Price${sortIndicator('avgPrice')}</th>
+              <th class="sortable" onclick="sortStaples('totalSavings')">Total Saved${sortIndicator('totalSavings')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedStaples.slice(0, 20).map(item => {
+              const tags = tagLookupMap[item.name] || [];
+              return `
+              <tr onclick="showProductDetail('${item.name.replace(/'/g, "\\'")}')">
+                <td>
+                  <strong>${item.name}</strong>
+                  ${tags.length > 0 ? `<br><div style="margin-top: 4px;">${tags.map(tag =>
+                    `<span style="background: #e8f5e9; color: #2e7d32; padding: 2px 6px; border-radius: 8px; font-size: 10px; margin-right: 4px;">🏷️ ${tag}</span>`
+                  ).join('')}</div>` : ''}
+                </td>
+                <td>${item.category}</td>
+                <td>${item.frequency}/${item.totalMonths}</td>
+                <td>${item.totalQuantity}</td>
+                <td><strong>${item.totalSpent.toFixed(2)} kr</strong></td>
+                <td>${item.avgPrice.toFixed(2)} kr</td>
+                <td style="color: #28a745;">${item.totalSavings > 0 ? '-' + item.totalSavings.toFixed(2) : '0.00'} kr</td>
+              </tr>
+            `}).join('')}
+          </tbody>
+        </table>
+
+        ${sortedStaples.length > 20 ? `<p style="margin-top: 10px; text-align: center; color: #666;">Showing top 20 of ${sortedStaples.length} staple products</p>` : ''}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('staples-section').innerHTML = html;
+}
+
+function renderCategories() {
+  const spending = analysisInstance.getCategorySpending();
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('categories-content')">
+        <span class="section-title">📊 Category Spending</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="categories-content" class="section-content">
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+
+        <table class="analysis-table" style="margin-top: 20px;">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Total Spent</th>
+              <th>Percentage</th>
+              <th>Items</th>
+              <th>Unique Products</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${spending.map(cat => `
+              <tr>
+                <td><strong>${cat.category}</strong></td>
+                <td>${cat.totalSpent.toFixed(2)} kr</td>
+                <td>${cat.percentage.toFixed(1)}%</td>
+                <td>${cat.itemCount}</td>
+                <td>${cat.uniqueProducts}</td>
+                <td>
+                  <button class="btn" style="padding: 4px 12px; font-size: 12px;" onclick="showCategoryDetails('${cat.category}')">
+                    View Products
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <div id="category-details" style="margin-top: 30px;"></div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('categories-section').innerHTML = html;
+
+  // Create pie chart with click handler
+  setTimeout(() => {
+    const ctx = document.getElementById('categoryChart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: spending.map(c => c.category),
+          datasets: [{
+            data: spending.map(c => c.totalSpent),
+            backgroundColor: [
+              '#667eea', '#764ba2', '#f093fb', '#4facfe',
+              '#43e97b', '#fa709a', '#fee140', '#30cfd0',
+              '#a8edea', '#fed6e3', '#ffeaa7', '#dfe6e9'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right'
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.label + ': ' + context.parsed.toFixed(2) + ' kr (' +
+                         spending[context.dataIndex].percentage.toFixed(1) + '%)';
+                }
+              }
+            }
+          },
+          onClick: (event, elements) => {
+            if (elements.length > 0) {
+              const index = elements[0].index;
+              const category = spending[index].category;
+              showCategoryDetails(category);
+            }
+          }
+        }
+      });
+    }
+  }, 100);
+}
+
+function renderDiscounts() {
+  const analysis = analysisInstance.getDiscountAnalysis();
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('discounts-content')">
+        <span class="section-title">💰 Discounts & Savings</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="discounts-content" class="section-content">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+          <div class="insight-card">
+            <div><span class="insight-icon">💰</span>Total Saved</div>
+            <div style="font-size: 28px; font-weight: bold; margin-top: 10px;">${analysis.totalSavings.toFixed(2)} kr</div>
+          </div>
+          <div class="insight-card">
+            <div><span class="insight-icon">📊</span>Avg Per Receipt</div>
+            <div style="font-size: 28px; font-weight: bold; margin-top: 10px;">${analysis.avgPerReceipt.toFixed(2)} kr</div>
+          </div>
+          <div class="insight-card">
+            <div><span class="insight-icon">📈</span>Savings Rate</div>
+            <div style="font-size: 28px; font-weight: bold; margin-top: 10px;">${analysis.savingsRate.toFixed(1)}%</div>
+          </div>
+        </div>
+
+        <h3 style="margin: 20px 0 10px 0;">Top Discounted Products</h3>
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Total Saved</th>
+              <th>Times On Sale</th>
+              <th>Discount Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${analysis.topDiscounted.slice(0, 10).map(item => `
+              <tr>
+                <td><strong>${item.name}</strong></td>
+                <td style="color: #28a745;">${item.totalSaved.toFixed(2)} kr</td>
+                <td>${item.timesOnSale}/${item.totalPurchases}</td>
+                <td>${item.discountRate.toFixed(0)}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('discounts-section').innerHTML = html;
+}
+
+function toggleSection(id) {
+  const content = document.getElementById(id);
+  if (content.style.display === 'none') {
+    content.style.display = 'block';
+  } else {
+    content.style.display = 'none';
+  }
+}
+
+function showProductDetail(productName) {
+  const history = analysisInstance.getPriceHistory(productName);
+  if (!history) return;
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  const stats = history.statistics;
+
+  // Check if this is a weight-based product
+  const isWeightBased = history.purchases.some(p => p.weight && p.pricePerKg);
+
+  let trend = '📊 Stable';
+  if (stats.priceChange > 5) trend = '📈 Increasing';
+  else if (stats.priceChange < -5) trend = '📉 Decreasing';
+
+  // Calculate weight-based statistics if applicable
+  let weightStats = null;
+  let bestPriceDate = null;
+  if (isWeightBased) {
+    const weightPrices = history.purchases.filter(p => p.pricePerKg).map(p => p.pricePerKg);
+    const avgKgPrice = weightPrices.reduce((a, b) => a + b, 0) / weightPrices.length;
+    const minKgPrice = Math.min(...weightPrices);
+    const latestKgPrice = weightPrices[weightPrices.length - 1];
+
+    // Find best price purchase
+    const bestPurchase = history.purchases.reduce((best, current) => {
+      if (!current.pricePerKg) return best;
+      if (!best || current.pricePerKg < best.pricePerKg) return current;
+      return best;
+    }, null);
+    bestPriceDate = bestPurchase?.date;
+
+    weightStats = {
+      min: minKgPrice,
+      max: Math.max(...weightPrices),
+      avg: avgKgPrice,
+      latest: latestKgPrice,
+      change: ((weightPrices[weightPrices.length - 1] - weightPrices[0]) / weightPrices[0] * 100),
+      currentVsAvg: ((latestKgPrice - avgKgPrice) / avgKgPrice * 100)
+    };
+  }
+
+  // Get all available categories for dropdown
+  const allCategories = getAllCategories();
+
+  // Get current tags for this product
+  const currentTags = getProductTags(productName);
+
+  // Get all existing tags for autocomplete suggestions
+  const allExistingTags = getAllTags();
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    ${modalNavigationContext && modalNavigationContext.type === 'tag' ? `
+      <button
+        onclick="showProductsByTag('${modalNavigationContext.tag}')"
+        class="btn"
+        style="margin-bottom: 15px; padding: 8px 16px; font-size: 13px; background: #6c757d;">
+        ← Back to "${modalNavigationContext.tag}" products
+      </button>
+    ` : ''}
+    <h2>${productName}</h2>
+    <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+      <span style="color: #666;">Category:</span>
+      <select
+        id="product-category-select"
+        onchange="updateProductCategory('${productName.replace(/'/g, "\\'")}', this.value)"
+        style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; background: white; cursor: pointer;">
+        ${allCategories.map(cat => `
+          <option value="${cat}" ${cat === history.category ? 'selected' : ''}>${cat}</option>
+        `).join('')}
+      </select>
+      ${isWeightBased ? '<span style="color: #666;">⚖️ Sold by weight</span>' : ''}
+    </div>
+
+    <div style="margin-bottom: 20px; background: #f9f9f9; padding: 15px; border-radius: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <span style="color: #666; font-weight: bold;">🏷️ Tags:</span>
+        ${currentTags.length > 0 ? currentTags.map(tag => `
+          <span style="background: #667eea; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px;">
+            ${tag}
+            <span onclick="removeProductTag('${productName.replace(/'/g, "\\'")}', '${tag}')" style="cursor: pointer; font-weight: bold;">&times;</span>
+          </span>
+        `).join('') : '<span style="color: #999; font-size: 12px;">No tags yet</span>'}
+      </div>
+      <div style="display: flex; gap: 5px;">
+        <input
+          type="text"
+          id="new-tag-input"
+          list="existing-tags-list"
+          placeholder="Add tag (e.g., coffee, hot beverage)"
+          onkeypress="if(event.key === 'Enter') addProductTag('${productName.replace(/'/g, "\\'")}')"
+          style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px;">
+        <datalist id="existing-tags-list">
+          ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+        </datalist>
+        <button
+          onclick="addProductTag('${productName.replace(/'/g, "\\'")}')"
+          class="btn"
+          style="padding: 6px 15px; font-size: 13px;">
+          Add
+        </button>
+      </div>
+      ${allExistingTags.length > 0 ? `
+        <div style="margin-top: 8px; font-size: 11px; color: #666;">
+          💡 Existing tags: ${allExistingTags.join(', ')}
+        </div>
+      ` : ''}
+    </div>
+
+    ${isWeightBased ? `
+      <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <h3 style="color: #2e7d32; margin-bottom: 15px;">📊 Price per Kilogram Trend</h3>
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">BEST PRICE</div>
+            <div style="font-size: 20px; font-weight: bold; color: #28a745;">🏆 ${weightStats.min.toFixed(2)} kr/kg</div>
+            <div style="font-size: 10px; color: #666; margin-top: 2px;">${bestPriceDate}</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">AVERAGE</div>
+            <div style="font-size: 20px; font-weight: bold;">${weightStats.avg.toFixed(2)} kr/kg</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">LATEST</div>
+            <div style="font-size: 20px; font-weight: bold; color: ${weightStats.currentVsAvg < -5 ? '#28a745' : weightStats.currentVsAvg > 5 ? '#dc3545' : '#666'};">
+              ${weightStats.latest.toFixed(2)} kr/kg
+            </div>
+            <div style="font-size: 10px; color: ${weightStats.currentVsAvg < 0 ? '#28a745' : '#dc3545'}; margin-top: 2px;">
+              ${weightStats.currentVsAvg > 0 ? '⬆' : '⬇'} ${Math.abs(weightStats.currentVsAvg).toFixed(1)}% vs avg
+            </div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">HIGHEST</div>
+            <div style="font-size: 20px; font-weight: bold; color: #dc3545;">${weightStats.max.toFixed(2)} kr/kg</div>
+          </div>
+        </div>
+
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+          <canvas id="price-per-kg-chart" style="max-height: 200px;"></canvas>
+        </div>
+
+        <div style="margin-top: 10px; text-align: center; padding: 10px; background: ${weightStats.currentVsAvg < 0 ? '#d4edda' : weightStats.currentVsAvg > 10 ? '#f8d7da' : '#fff3cd'}; border-radius: 5px;">
+          ${weightStats.currentVsAvg < -5 ?
+            `<strong style="color: #155724;">✓ Good Deal!</strong> Current price is ${Math.abs(weightStats.currentVsAvg).toFixed(1)}% below your average` :
+            weightStats.currentVsAvg > 10 ?
+            `<strong style="color: #721c24;">⚠ High Price!</strong> Current price is ${weightStats.currentVsAvg.toFixed(1)}% above your average` :
+            `<strong style="color: #856404;">💰 Normal Price</strong> Current price is near your average`
+          }
+        </div>
+      </div>
+    ` : ''}
+
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'LOWEST TOTAL' : 'LOWEST PRICE'}</div>
+        <div style="font-size: 24px; font-weight: bold; color: #28a745;">${stats.min.price.toFixed(2)} kr</div>
+        <div style="font-size: 11px; color: #999;">${stats.min.date}</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'AVG TOTAL' : 'AVERAGE'}</div>
+        <div style="font-size: 24px; font-weight: bold;">${stats.avg.toFixed(2)} kr</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'HIGHEST TOTAL' : 'HIGHEST PRICE'}</div>
+        <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${stats.max.price.toFixed(2)} kr</div>
+        <div style="font-size: 11px; color: #999;">${stats.max.date}</div>
+      </div>
+    </div>
+
+    <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+      <div><strong>Price Trend:</strong> ${trend} (${stats.priceChange > 0 ? '+' : ''}${stats.priceChange.toFixed(1)}%)</div>
+      <div style="margin-top: 5px;"><strong>Total Savings:</strong> ${stats.totalDiscount.toFixed(2)} kr</div>
+      <div style="margin-top: 5px;"><strong>Purchases:</strong> ${history.purchases.length} times</div>
+    </div>
+
+    <h3>Purchase History</h3>
+    <div style="max-height: 300px; overflow-y: auto;">
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            ${isWeightBased ? '<th>Weight</th>' : '<th>Qty</th>'}
+            ${isWeightBased ? '<th>Price/kg</th>' : ''}
+            <th>Unit Price</th>
+            <th>Discount</th>
+            <th>Net Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${history.purchases.map((p, idx) => {
+            const netPrice = p.totalPrice - p.discount;
+
+            // For weight-based items, compare price per kg instead of total
+            const currentPrice = isWeightBased && p.pricePerKg ? p.pricePerKg : p.unitPrice;
+            const prevPrice = idx > 0 ? (isWeightBased && history.purchases[idx - 1].pricePerKg ? history.purchases[idx - 1].pricePerKg : history.purchases[idx - 1].unitPrice) : currentPrice;
+            const priceChange = ((currentPrice - prevPrice) / prevPrice * 100).toFixed(1);
+            const changeIndicator = idx > 0 && Math.abs(priceChange) > 2 ?
+              (priceChange > 0 ? ` ⚠+${priceChange}%` : ` ✓${priceChange}%`) : '';
+
+            // Check if this is the best price for weight-based products
+            const isBestPrice = isWeightBased && p.pricePerKg && p.date === bestPriceDate;
+            const isBelowAvg = isWeightBased && weightStats && p.pricePerKg && p.pricePerKg < weightStats.avg;
+
+            return `
+              <tr style="${isBestPrice ? 'background: #d4edda;' : isBelowAvg ? 'background: #f0f8f0;' : ''}">
+                <td>${p.date}${isBestPrice ? ' <strong style="color: #28a745;">🏆 BEST</strong>' : ''}</td>
+                ${isWeightBased ? `<td>${p.weight ? p.weight.toFixed(3) + ' kg' : '—'}</td>` : `<td>${p.quantity}</td>`}
+                ${isWeightBased ? `<td><strong style="color: ${isBestPrice ? '#28a745' : isBelowAvg ? '#20c997' : 'inherit'};">${p.pricePerKg ? p.pricePerKg.toFixed(2) + ' kr/kg' + changeIndicator : '—'}</strong></td>` : ''}
+                <td>${p.unitPrice.toFixed(2)} kr${!isWeightBased ? changeIndicator : ''}</td>
+                <td style="color: #28a745;">${p.discount > 0 ? '-' + p.discount.toFixed(2) : '0.00'}</td>
+                <td><strong>${netPrice.toFixed(2)} kr</strong></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Render kr/kg chart for weight-based products
+  if (isWeightBased && weightStats) {
+    setTimeout(() => {
+      const chartCanvas = document.getElementById('price-per-kg-chart');
+      if (chartCanvas) {
+        const chartData = history.purchases
+          .filter(p => p.pricePerKg)
+          .map(p => ({
+            x: p.date,
+            y: p.pricePerKg
+          }));
+
+        new Chart(chartCanvas, {
+          type: 'line',
+          data: {
+            labels: chartData.map(d => d.x),
+            datasets: [
+              {
+                label: 'Price per kg (kr/kg)',
+                data: chartData.map(d => d.y),
+                borderColor: '#2e7d32',
+                backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 5,
+                pointBackgroundColor: chartData.map(d =>
+                  d.y === weightStats.min ? '#28a745' :
+                  d.y < weightStats.avg ? '#20c997' : '#dc3545'
+                ),
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+              },
+              {
+                label: 'Average (' + weightStats.avg.toFixed(2) + ' kr/kg)',
+                data: chartData.map(() => weightStats.avg),
+                borderColor: '#ffc107',
+                borderDash: [5, 5],
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'top'
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    if (context.datasetIndex === 0) {
+                      const value = context.parsed.y;
+                      const diffFromAvg = ((value - weightStats.avg) / weightStats.avg * 100).toFixed(1);
+                      return value.toFixed(2) + ' kr/kg (' + (diffFromAvg > 0 ? '+' : '') + diffFromAvg + '% vs avg)';
+                    }
+                    return 'Average: ' + context.parsed.y.toFixed(2) + ' kr/kg';
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: false,
+                title: {
+                  display: true,
+                  text: 'kr/kg'
+                },
+                ticks: {
+                  callback: function(value) {
+                    return value.toFixed(2) + ' kr';
+                  }
+                }
+              },
+              x: {
+                title: {
+                  display: true,
+                  text: 'Purchase Date'
+                }
+              }
+            }
+          }
+        });
+      }
+    }, 100);
+  }
+}
+
+function closeModal() {
+  document.getElementById('product-modal').style.display = 'none';
+  document.getElementById('modal-overlay').style.display = 'none';
+  modalNavigationContext = null; // Clear navigation context
+}
+
+// Show product detail from tag filter (with back navigation)
+function showProductDetailFromTag(productName, tag) {
+  modalNavigationContext = { type: 'tag', tag: tag };
+  showProductDetail(productName);
+}
+
+// Update product category from analysis tab
+function updateProductCategory(standardName, newCategory) {
+  const customMappings = loadCustomMappings();
+
+  // Find all raw product names that map to this standardized name
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    if (!customMappings[rawName]) {
+      customMappings[rawName] = {
+        standardName: product.standardName,
+        category: newCategory,
+        tags: []
+      };
+    } else {
+      customMappings[rawName].category = newCategory;
+    }
+  });
+
+  // Save and refresh
+  saveCustomMappings(customMappings);
+
+  // Preserve navigation context before closing
+  const savedContext = modalNavigationContext;
+  closeModal();
+  setTimeout(() => {
+    modalNavigationContext = savedContext;
+    showProductDetail(standardName);
+  }, 100);
+}
+
+// Get tags for a product by raw name (optimized for Product Library)
+function getProductTagsByRawName(rawName) {
+  const customMappings = loadCustomMappings();
+  const mapping = customMappings[rawName];
+
+  if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+    return mapping.tags.sort();
+  }
+
+  return [];
+}
+
+// Get tags for a product (returns array of unique tags across all raw names)
+function getProductTags(standardName) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  const allTags = new Set();
+  matchingProducts.forEach(product => {
+    const mapping = customMappings[product.rawName];
+    if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => allTags.add(tag));
+    }
+  });
+
+  return Array.from(allTags).sort();
+}
+
+// Update tags for a product
+function updateProductTags(standardName, tags) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    if (!customMappings[rawName]) {
+      customMappings[rawName] = {
+        standardName: product.standardName,
+        category: product.category,
+        tags: tags
+      };
+    } else {
+      customMappings[rawName].tags = tags;
+    }
+  });
+
+  // Save and refresh
+  saveCustomMappings(customMappings);
+
+  // Preserve navigation context before closing
+  const savedContext = modalNavigationContext;
+  closeModal();
+  setTimeout(() => {
+    modalNavigationContext = savedContext;
+    showProductDetail(standardName);
+  }, 100);
+}
+
+// Add a tag to a product
+function addProductTag(standardName) {
+  const tagInput = document.getElementById('new-tag-input');
+  const newTag = tagInput.value.trim().toLowerCase();
+
+  if (!newTag) {
+    alert('Tag cannot be empty');
+    return;
+  }
+
+  const currentTags = getProductTags(standardName);
+  if (currentTags.includes(newTag)) {
+    alert('This tag already exists');
+    tagInput.value = '';
+    return;
+  }
+
+  currentTags.push(newTag);
+  updateProductTags(standardName, currentTags);
+}
+
+// Remove a tag from a product
+function removeProductTag(standardName, tag) {
+  const currentTags = getProductTags(standardName);
+  const filtered = currentTags.filter(t => t !== tag);
+  updateProductTags(standardName, filtered);
+}
+
+// Add tag from Product Library table
+function addProductTagFromLibrary(inputElement) {
+  const rawName = inputElement.getAttribute('data-raw-product');
+  const newTag = inputElement.value.trim().toLowerCase();
+
+  if (!newTag) {
+    return;
+  }
+
+  const currentTags = getProductTagsByRawName(rawName);
+  if (currentTags.includes(newTag)) {
+    alert('This tag already exists');
+    return;
+  }
+
+  currentTags.push(newTag);
+  updateProductTagsByRawName(rawName, currentTags);
+}
+
+// Remove tag from Product Library table
+function removeProductTagFromLibrary(rawName, tag) {
+  const currentTags = getProductTagsByRawName(rawName);
+  const filtered = currentTags.filter(t => t !== tag);
+  updateProductTagsByRawName(rawName, filtered);
+}
+
+// Update tags by raw name and refresh Product Library (optimized)
+function updateProductTagsByRawName(rawName, tags) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const product = productLibrary.find(p => p.rawName === rawName);
+
+  if (!product) return;
+
+  if (!customMappings[rawName]) {
+    customMappings[rawName] = {
+      standardName: product.standardName,
+      category: product.category,
+      tags: tags
+    };
+  } else {
+    customMappings[rawName].tags = tags;
+  }
+
+  // Save and refresh library
+  saveCustomMappings(customMappings);
+  renderProductLibrary(document.getElementById('productSearch').value);
+}
+
+// Show detailed products for a category
+function showCategoryDetails(categoryName) {
+  const detailsDiv = document.getElementById('category-details');
+
+  // Get all products in this category
+  const categoryData = analysisInstance.processed.categories[categoryName];
+  if (!categoryData) {
+    detailsDiv.innerHTML = '<p style="color: #999;">No products found in this category.</p>';
+    return;
+  }
+
+  // Group by product name
+  const productMap = {};
+  categoryData.forEach(purchase => {
+    if (!productMap[purchase.standardName]) {
+      productMap[purchase.standardName] = {
+        name: purchase.standardName,
+        totalQuantity: 0,
+        totalSpent: 0,
+        totalDiscount: 0,
+        purchases: []
+      };
+    }
+    productMap[purchase.standardName].totalQuantity += purchase.quantity;
+    productMap[purchase.standardName].totalSpent += purchase.totalPrice;
+    productMap[purchase.standardName].totalDiscount += purchase.discount;
+    productMap[purchase.standardName].purchases.push(purchase);
+  });
+
+  // Convert to array and sort by spending
+  const products = Object.values(productMap).sort((a, b) => b.totalSpent - a.totalSpent);
+
+  // Pre-build tag lookup map to avoid rebuilding product library multiple times
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const tagLookupMap = {};
+
+  products.forEach(p => {
+    const allTags = new Set();
+    const matchingProducts = productLibrary.filter(prod => prod.standardName === p.name);
+    matchingProducts.forEach(product => {
+      const mapping = customMappings[product.rawName];
+      if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+        mapping.tags.forEach(tag => allTags.add(tag));
+      }
+    });
+    tagLookupMap[p.name] = Array.from(allTags).sort();
+  });
+
+  detailsDiv.innerHTML = `
+    <div style="border-top: 2px solid #ddd; padding-top: 20px;">
+      <h3 style="color: #667eea; margin-bottom: 15px;">
+        📦 Products in "${categoryName}" Category (${products.length} products)
+      </h3>
+
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Total Qty</th>
+            <th>Total Spent</th>
+            <th>Avg Price</th>
+            <th>Purchases</th>
+            <th>Discounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${products.map(p => {
+            const avgPrice = p.totalSpent / p.totalQuantity;
+            const tags = tagLookupMap[p.name] || [];
+            return `
+              <tr style="cursor: pointer;" onclick="showProductDetail('${p.name.replace(/'/g, "\\'")}')">
+                <td>
+                  <strong>${p.name}</strong>
+                  ${tags.length > 0 ? `<br><div style="margin-top: 4px;">${tags.map(tag =>
+                    `<span style="background: #e8f5e9; color: #2e7d32; padding: 2px 6px; border-radius: 8px; font-size: 10px; margin-right: 4px;">🏷️ ${tag}</span>`
+                  ).join('')}</div>` : ''}
+                </td>
+                <td>${p.totalQuantity}</td>
+                <td>${p.totalSpent.toFixed(2)} kr</td>
+                <td>${avgPrice.toFixed(2)} kr</td>
+                <td>${p.purchases.length} times</td>
+                <td style="color: ${p.totalDiscount > 0 ? '#28a745' : '#999'};">
+                  ${p.totalDiscount > 0 ? '-' + p.totalDiscount.toFixed(2) + ' kr' : 'None'}
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <p style="margin-top: 15px; font-size: 12px; color: #666; text-align: center;">
+        💡 Click on any product to see detailed price history and trends
+      </p>
+    </div>
+  `;
+
+  // Scroll to the details
+  detailsDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ===== PRODUCT LIBRARY MANAGEMENT =====
+
+// Load custom product mappings from localStorage
+function loadCustomMappings() {
+  const saved = localStorage.getItem('customProductMappings');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save custom product mappings to localStorage
+function saveCustomMappings(mappings) {
+  localStorage.setItem('customProductMappings', JSON.stringify(mappings));
+  // Reload analysis to reflect changes
+  if (allReceipts.length > 0) {
+    renderAnalysis();
+  }
+}
+
+// Build product library from all receipts
+function buildProductLibrary() {
+  const productMap = new Map();
+  const customMappings = loadCustomMappings();
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      const rawName = item.name;
+      if (!productMap.has(rawName)) {
+        // Get standardized name and category (from custom or default)
+        const customData = customMappings[rawName];
+        const standardName = customData?.standardName || window.ProductCategories.standardizeProduct(rawName);
+        const category = customData?.category || window.ProductCategories.getCategory(standardName);
+
+        productMap.set(rawName, {
+          rawName: rawName,
+          standardName: standardName,
+          category: category,
+          count: 0,
+          totalSpent: 0,
+          lastSeen: receipt.date,
+          isCustom: !!customData
+        });
+      }
+
+      const product = productMap.get(rawName);
+      product.count += item.quantity;
+      product.totalSpent += item.totalPrice;
+      if (receipt.date > product.lastSeen) {
+        product.lastSeen = receipt.date;
+      }
+    });
+  });
+
+  return Array.from(productMap.values()).sort((a, b) => b.count - a.count);
+}
+
+// Get all unique categories
+function getAllCategories() {
+  const defaultCategories = [
+    'Dairy',
+    'Dairy - Cheese',
+    'Dairy - Butter',
+    'Dairy - Eggs',
+    'Dairy - Yogurt',
+    'Bread & Bakery',
+    'Meat & Proteins',
+    'Beverages',
+    'Alcoholic Beverages',
+    'Produce',
+    'Frozen Foods',
+    'Pantry - Pasta',
+    'Pantry - Grains',
+    'Pantry - Sauces',
+    'Pantry - Spices',
+    'Condiments & Spreads',
+    'Prepared Foods',
+    'Breakfast & Cereals',
+    'Snacks',
+    'Household',
+    'Personal Care',
+    'Pet Food',
+    'Other'
+  ];
+
+  // Load custom categories
+  const customCategories = loadCustomCategories();
+
+  // Merge and sort
+  const allCategories = [...new Set([...defaultCategories, ...customCategories])];
+  return allCategories.sort();
+}
+
+// Load custom categories from localStorage
+function loadCustomCategories() {
+  const saved = localStorage.getItem('customCategories');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save custom categories to localStorage
+function saveCustomCategories(categories) {
+  localStorage.setItem('customCategories', JSON.stringify(categories));
+}
+
+// Add a new custom category
+function addCustomCategory(categoryName) {
+  const trimmed = categoryName.trim();
+  if (!trimmed) {
+    alert('Category name cannot be empty');
+    return false;
+  }
+
+  const existing = getAllCategories();
+  if (existing.includes(trimmed)) {
+    alert('This category already exists');
+    return false;
+  }
+
+  const customCategories = loadCustomCategories();
+  customCategories.push(trimmed);
+  saveCustomCategories(customCategories);
+  return true;
+}
+
+// Delete a custom category
+function deleteCustomCategory(categoryName) {
+  const customCategories = loadCustomCategories();
+  const filtered = customCategories.filter(c => c !== categoryName);
+  saveCustomCategories(filtered);
+
+  // Also need to update any products using this category
+  const customMappings = loadCustomMappings();
+  let updated = false;
+  Object.keys(customMappings).forEach(rawName => {
+    if (customMappings[rawName].category === categoryName) {
+      customMappings[rawName].category = 'Other';
+      updated = true;
+    }
+  });
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+}
+
+// Render product library table
+function renderProductLibrary(searchFilter = '') {
+  const products = buildProductLibrary();
+  const filteredProducts = searchFilter
+    ? products.filter(p => {
+        const tags = getProductTagsByRawName(p.rawName);
+        return p.rawName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+               p.standardName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+               p.category.toLowerCase().includes(searchFilter.toLowerCase()) ||
+               tags.some(tag => tag.includes(searchFilter.toLowerCase()));
+      })
+    : products;
+
+  const categories = getAllCategories();
+  const customMappings = loadCustomMappings();
+
+  const content = document.getElementById('product-library-content');
+
+  if (filteredProducts.length === 0) {
+    content.innerHTML = `
+      <div style="text-align: center; padding: 40px 20px; color: #999;">
+        <div style="font-size: 48px; margin-bottom: 20px;">🔍</div>
+        <h3>No products found</h3>
+        <p style="margin-top: 10px;">Try a different search term</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Get all existing tags once before rendering
+  const allExistingTags = getAllTags();
+
+  content.innerHTML = `
+    <div style="margin-bottom: 15px; color: #666;">
+      <strong>${filteredProducts.length}</strong> products found (${products.length} total)
+      ${Object.keys(customMappings).length > 0 ? `
+        • <span style="color: #28a745;"><strong>${Object.keys(customMappings).length}</strong> custom mappings</span>
+      ` : ''}
+    </div>
+    <div style="max-height: 70vh; overflow-y: auto;">
+      <table class="product-table">
+        <thead>
+          <tr>
+            <th style="width: 25%;">Original Name</th>
+            <th style="width: 30%;">Standardized Name</th>
+            <th style="width: 20%;">Category</th>
+            <th style="width: 15%;">Tags</th>
+            <th style="width: 10%;">Purchases</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredProducts.map(p => {
+            const productTags = getProductTagsByRawName(p.rawName);
+            return `
+            <tr>
+              <td>
+                <div style="font-family: monospace; color: #555;">${p.rawName}</div>
+                <div style="font-size: 11px; color: #999; margin-top: 2px;">Last: ${p.lastSeen}</div>
+              </td>
+              <td>
+                <input
+                  type="text"
+                  value="${p.standardName}"
+                  data-raw="${p.rawName}"
+                  data-field="standardName"
+                  onchange="updateProductMapping(this)"
+                  placeholder="Enter product name..."
+                />
+                ${p.isCustom ? '<span class="edit-indicator">✓ Custom</span>' : ''}
+              </td>
+              <td>
+                <input
+                  type="text"
+                  list="categories-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  value="${p.category}"
+                  data-raw="${p.rawName}"
+                  data-field="category"
+                  onchange="updateProductMapping(this)"
+                  placeholder="Select or type category..."
+                />
+                <datalist id="categories-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
+                  ${categories.map(cat => `
+                    <option value="${cat}">${cat}</option>
+                  `).join('')}
+                </datalist>
+              </td>
+              <td>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px;">
+                  ${productTags.length > 0 ? productTags.map(tag => `
+                    <span style="background: #667eea; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+                      ${tag}
+                      <span onclick="removeProductTagFromLibrary('${p.rawName.replace(/'/g, "\\'")}', '${tag}')" style="cursor: pointer; font-weight: bold;">&times;</span>
+                    </span>
+                  `).join('') : '<span style="font-size: 11px; color: #999;">—</span>'}
+                </div>
+                <input
+                  type="text"
+                  list="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  placeholder="Add tag..."
+                  data-raw-product="${p.rawName.replace(/"/g, '&quot;')}"
+                  onkeypress="if(event.key === 'Enter') { addProductTagFromLibrary(this); this.value = ''; }"
+                  style="font-size: 12px; padding: 4px 6px;"
+                />
+                <datalist id="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
+                  ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+                </datalist>
+              </td>
+              <td>
+                <span class="product-count">${p.count}</span>
+                <div style="font-size: 11px; color: #999; margin-top: 4px;">${p.totalSpent.toFixed(0)} kr</div>
+              </td>
+            </tr>
+          `}).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// Update product mapping
+function updateProductMapping(element) {
+  const rawName = element.getAttribute('data-raw');
+  const field = element.getAttribute('data-field');
+  const value = element.value.trim();
+
+  if (!value) {
+    alert('Value cannot be empty');
+    renderProductLibrary();
+    return;
+  }
+
+  const customMappings = loadCustomMappings();
+
+  if (!customMappings[rawName]) {
+    customMappings[rawName] = {
+      standardName: window.ProductCategories.standardizeProduct(rawName),
+      category: window.ProductCategories.getCategory(window.ProductCategories.standardizeProduct(rawName))
+    };
+  }
+
+  customMappings[rawName][field] = value;
+  saveCustomMappings(customMappings);
+
+  // If this is a category field and it's a new category, add it to custom categories
+  if (field === 'category') {
+    const allCategories = getAllCategories();
+    if (!allCategories.includes(value)) {
+      const customCategories = loadCustomCategories();
+      customCategories.push(value);
+      saveCustomCategories(customCategories);
+    }
+  }
+
+  renderProductLibrary(document.getElementById('productSearch').value);
+}
+
+// Add search handler
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('productSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      renderProductLibrary(e.target.value);
+    });
+  }
+});
+
+// Handle adding a new category
+function handleAddCategory() {
+  const input = document.getElementById('newCategoryInput');
+  const categoryName = input.value.trim();
+
+  if (addCustomCategory(categoryName)) {
+    input.value = '';
+    const hint = document.getElementById('categoryHint');
+    hint.innerHTML = `✓ Category "<strong>${categoryName}</strong>" added! You can now assign products to it.`;
+    hint.style.color = '#28a745';
+    setTimeout(() => {
+      hint.innerHTML = 'Type a new category name and click Add. You can then assign products to your custom categories.';
+      hint.style.color = '#666';
+    }, 3000);
+
+    // Refresh the product library to show updated categories
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+// Show category management modal
+function showCategoryManager() {
+  const customCategories = loadCustomCategories();
+  const defaultCategories = [
+    'Dairy', 'Dairy - Cheese', 'Dairy - Butter', 'Dairy - Eggs', 'Dairy - Yogurt',
+    'Bread & Bakery', 'Meat & Proteins', 'Beverages', 'Alcoholic Beverages',
+    'Produce', 'Frozen Foods', 'Pantry - Pasta', 'Pantry - Grains',
+    'Pantry - Sauces', 'Pantry - Spices', 'Condiments & Spreads',
+    'Prepared Foods', 'Breakfast & Cereals', 'Snacks', 'Household',
+    'Personal Care', 'Pet Food', 'Other'
+  ];
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>📁 Category Management</h2>
+
+    <div style="margin: 20px 0;">
+      <h3>Default Categories (${defaultCategories.length})</h3>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">
+        ${defaultCategories.map(cat => `
+          <span style="background: #e9ecef; padding: 6px 12px; border-radius: 4px; font-size: 13px;">${cat}</span>
+        `).join('')}
+      </div>
+    </div>
+
+    ${customCategories.length > 0 ? `
+      <div style="margin: 20px 0;">
+        <h3>Custom Categories (${customCategories.length})</h3>
+        <div style="margin-top: 10px;">
+          ${customCategories.map(cat => `
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
+              <span style="font-weight: 500; color: #28a745;">${cat}</span>
+              <div style="display: flex; gap: 8px;">
+                <button
+                  class="btn"
+                  onclick="handleRenameCategory('${cat.replace(/'/g, "\\'")}')"
+                  style="padding: 6px 12px; font-size: 12px;"
+                  title="Rename this category"
+                >Rename</button>
+                <button
+                  class="reset-btn"
+                  onclick="handleDeleteCategory('${cat.replace(/'/g, "\\'")}')"
+                  style="padding: 6px 12px; font-size: 12px;"
+                  title="Delete this category"
+                >Delete</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : `
+      <div style="text-align: center; padding: 20px; color: #999;">
+        <p>No custom categories yet. Add one using the input above!</p>
+      </div>
+    `}
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Export custom data to JSON file
+function exportCustomData() {
+  const exportData = {
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    customProductMappings: loadCustomMappings(),
+    customCategories: loadCustomCategories()
+  };
+
+  const dataStr = JSON.stringify(exportData, null, 2);
+  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(dataBlob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `grocery-data-backup-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  alert(`✅ Data exported successfully!\n\nFile: ${link.download}\n\nThis includes:\n• ${Object.keys(exportData.customProductMappings).length} custom product mappings\n• ${exportData.customCategories.length} custom categories\n• All tags`);
+}
+
+// Import custom data from JSON file
+function importCustomData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const importData = JSON.parse(e.target.result);
+
+      // Validate the data structure
+      if (!importData.version || !importData.customProductMappings || !importData.customCategories) {
+        throw new Error('Invalid backup file format');
+      }
+
+      // Confirm before overwriting
+      const mappingsCount = Object.keys(importData.customProductMappings).length;
+      const categoriesCount = importData.customCategories.length;
+
+      if (!confirm(`Import data from backup?\n\nThis will import:\n• ${mappingsCount} product mappings\n• ${categoriesCount} custom categories\n• All associated tags\n\nYour current custom data will be merged with the imported data.`)) {
+        event.target.value = ''; // Reset file input
+        return;
+      }
+
+      // Merge custom mappings (imported data takes precedence)
+      const currentMappings = loadCustomMappings();
+      const mergedMappings = { ...currentMappings, ...importData.customProductMappings };
+      localStorage.setItem('customProductMappings', JSON.stringify(mergedMappings));
+
+      // Merge custom categories (avoid duplicates)
+      const currentCategories = loadCustomCategories();
+      const allCategories = [...new Set([...currentCategories, ...importData.customCategories])];
+      localStorage.setItem('customCategories', JSON.stringify(allCategories));
+
+      // Refresh the display
+      if (allReceipts.length > 0) {
+        renderAnalysis();
+      }
+      renderProductLibrary(document.getElementById('productSearch')?.value || '');
+
+      alert(`✅ Data imported successfully!\n\nImported:\n• ${mappingsCount} product mappings\n• ${categoriesCount} custom categories\n\nYour Product Library has been updated.`);
+
+    } catch (error) {
+      alert(`❌ Error importing data:\n\n${error.message}\n\nPlease make sure you're using a valid backup file.`);
+      console.error('Import error:', error);
+    }
+
+    // Reset file input
+    event.target.value = '';
+  };
+
+  reader.readAsText(file);
+}
+
+// Handle deleting a custom category
+function handleDeleteCategory(categoryName) {
+  if (!confirm(`Delete category "${categoryName}"?\n\nProducts using this category will be moved to "Other".`)) {
+    return;
+  }
+
+  deleteCustomCategory(categoryName);
+  showCategoryManager(); // Refresh the modal
+
+  // Refresh the product library to show updated products
+  if (allReceipts.length > 0) {
+    renderProductLibrary(document.getElementById('productSearch').value);
+  }
+}
+
+// Rename a category globally
+function renameCategory(oldName, newName) {
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    alert('Category name cannot be empty');
+    return false;
+  }
+
+  if (oldName === trimmed) {
+    return true; // No change
+  }
+
+  const allCategories = getAllCategories();
+  if (allCategories.includes(trimmed) && trimmed !== oldName) {
+    alert('A category with this name already exists');
+    return false;
+  }
+
+  // Update custom categories list
+  const customCategories = loadCustomCategories();
+  const index = customCategories.indexOf(oldName);
+  if (index !== -1) {
+    customCategories[index] = trimmed;
+    saveCustomCategories(customCategories);
+  }
+
+  // Update all products using this category
+  const customMappings = loadCustomMappings();
+  let updated = false;
+  Object.keys(customMappings).forEach(rawName => {
+    if (customMappings[rawName].category === oldName) {
+      customMappings[rawName].category = trimmed;
+      updated = true;
+    }
+  });
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+
+  return true;
+}
+
+// Handle renaming a category
+function handleRenameCategory(oldName) {
+  const newName = prompt(`Rename category "${oldName}" to:`, oldName);
+  if (newName === null) return; // User cancelled
+
+  if (renameCategory(oldName, newName)) {
+    showCategoryManager(); // Refresh the modal
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+// Show tag management modal
+function showTagManager() {
+  const allTags = getAllTags();
+
+  if (allTags.length === 0) {
+    alert('No tags found. Add tags to your products first!');
+    return;
+  }
+
+  // Count products per tag
+  const customMappings = loadCustomMappings();
+  const tagCounts = {};
+  allTags.forEach(tag => tagCounts[tag] = 0);
+
+  Object.values(customMappings).forEach(mapping => {
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => {
+        if (tagCounts[tag] !== undefined) {
+          tagCounts[tag]++;
+        }
+      });
+    }
+  });
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🏷️ Tag Management</h2>
+    <p style="color: #666; margin-bottom: 20px;">Manage all your tags. Renaming a tag will update it across all products. Deleting a tag will remove it from all products.</p>
+
+    <div style="margin: 20px 0;">
+      <h3>All Tags (${allTags.length})</h3>
+      <div style="margin-top: 10px;">
+        ${allTags.sort().map(tag => `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <span style="font-weight: 500; color: #667eea; font-size: 14px;">${tag}</span>
+              <span style="color: #999; font-size: 12px; margin-left: 10px;">(${tagCounts[tag]} product${tagCounts[tag] !== 1 ? 's' : ''})</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button
+                class="btn"
+                onclick="handleRenameTag('${tag.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px; background: #667eea;"
+                title="Rename this tag"
+              >Rename</button>
+              <button
+                class="reset-btn"
+                onclick="handleDeleteTag('${tag.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Delete this tag"
+              >Delete</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Delete a tag globally
+function deleteTag(tagName) {
+  const customMappings = loadCustomMappings();
+  let updated = false;
+
+  Object.keys(customMappings).forEach(rawName => {
+    const mapping = customMappings[rawName];
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      const originalLength = mapping.tags.length;
+      mapping.tags = mapping.tags.filter(t => t !== tagName);
+      if (mapping.tags.length !== originalLength) {
+        updated = true;
+      }
+    }
+  });
+
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+}
+
+// Handle deleting a tag
+function handleDeleteTag(tagName) {
+  if (!confirm(`Delete tag "${tagName}"?\n\nThis tag will be removed from all products.`)) {
+    return;
+  }
+
+  deleteTag(tagName);
+
+  // Close modal if no tags left, otherwise refresh
+  const remainingTags = getAllTags();
+  if (remainingTags.length === 0) {
+    closeModal();
+    alert('All tags have been deleted.');
+  } else {
+    showTagManager(); // Refresh the modal
+  }
+
+  // Refresh the product library to show updated products
+  if (allReceipts.length > 0) {
+    renderProductLibrary(document.getElementById('productSearch').value);
+  }
+}
+
+// Rename a tag globally
+function renameTag(oldTag, newTag) {
+  const trimmed = newTag.trim().toLowerCase();
+  if (!trimmed) {
+    alert('Tag name cannot be empty');
+    return false;
+  }
+
+  if (oldTag === trimmed) {
+    return true; // No change
+  }
+
+  const allTags = getAllTags();
+  if (allTags.includes(trimmed) && trimmed !== oldTag) {
+    alert('A tag with this name already exists');
+    return false;
+  }
+
+  const customMappings = loadCustomMappings();
+  let updated = false;
+
+  Object.keys(customMappings).forEach(rawName => {
+    const mapping = customMappings[rawName];
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      const index = mapping.tags.indexOf(oldTag);
+      if (index !== -1) {
+        mapping.tags[index] = trimmed;
+        updated = true;
+      }
+    }
+  });
+
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+
+  return true;
+}
+
+// Handle renaming a tag
+function handleRenameTag(oldTag) {
+  const newTag = prompt(`Rename tag "${oldTag}" to:`, oldTag);
+  if (newTag === null) return; // User cancelled
+
+  if (renameTag(oldTag, newTag)) {
+    showTagManager(); // Refresh the modal
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+</script>
+</body>
+</html>
