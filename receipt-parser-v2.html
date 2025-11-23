@@ -5227,9 +5227,14 @@ function generateSuggestions() {
   // Group products by standardized product name from actual receipts
   const groupedProducts = {};
 
+  // Track items bought together (for complementary product suggestions)
+  const itemCoBuys = {}; // productName -> {coProduct: count}
+
   // Process each receipt and each item
   allReceipts.forEach(receipt => {
     if (!receipt.items || !receipt.date) return;
+
+    const receiptProducts = new Set();
 
     receipt.items.forEach(item => {
       // Get standardized product name using same logic as product library
@@ -5242,6 +5247,8 @@ function generateSuggestions() {
         return;
       }
 
+      receiptProducts.add(productName);
+
       const brand = mapping.brand || '';
       const productType = mapping.productType || '';
       const storeSection = mapping.storeSection || '';
@@ -5253,21 +5260,41 @@ function generateSuggestions() {
           productType: productType,
           storeSection: storeSection,
           purchases: [],
-          totalSpent: 0
+          totalSpent: 0,
+          prices: []
         };
       }
+
+      const unitPrice = item.totalPrice / (item.quantity || 1);
 
       groupedProducts[productName].purchases.push({
         date: new Date(receipt.date),
         price: item.totalPrice,
-        quantity: item.quantity
+        quantity: item.quantity,
+        unitPrice: unitPrice
       });
 
+      groupedProducts[productName].prices.push(unitPrice);
       groupedProducts[productName].totalSpent += item.totalPrice;
+    });
+
+    // Track co-purchases (items bought together in same receipt)
+    const products = Array.from(receiptProducts);
+    products.forEach(prod1 => {
+      if (!itemCoBuys[prod1]) itemCoBuys[prod1] = {};
+      products.forEach(prod2 => {
+        if (prod1 !== prod2) {
+          itemCoBuys[prod1][prod2] = (itemCoBuys[prod1][prod2] || 0) + 1;
+        }
+      });
     });
   });
 
-  // Calculate frequency and create suggestions
+  // Get current shopping list to find complementary items
+  const currentList = loadShoppingList();
+  const currentListNames = new Set(currentList.map(item => item.name.toLowerCase()));
+
+  // Calculate frequency and create suggestions with smart scoring
   Object.values(groupedProducts).forEach(group => {
     const purchases = group.purchases;
     if (purchases.length === 0) return;
@@ -5275,6 +5302,17 @@ function generateSuggestions() {
     // Calculate average price per unit
     const totalQuantity = purchases.reduce((sum, p) => sum + p.quantity, 0);
     const avgPrice = group.totalSpent / totalQuantity;
+
+    // Calculate price statistics
+    const prices = group.prices.sort((a, b) => a - b);
+    const minPrice = prices[0];
+    const maxPrice = prices[prices.length - 1];
+    const medianPrice = prices[Math.floor(prices.length / 2)];
+
+    // Check if recent prices are good deals
+    const recentPurchases = purchases.slice(-3); // Last 3 purchases
+    const recentAvgPrice = recentPurchases.reduce((sum, p) => sum + p.unitPrice, 0) / recentPurchases.length;
+    const isGoodDeal = recentAvgPrice < medianPrice * 0.95; // 5% below median
 
     // Calculate days since last purchase
     const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
@@ -5291,29 +5329,60 @@ function generateSuggestions() {
       avgDaysBetween = totalDays / (sortedDates.length - 1);
     }
 
-    // Determine if this should be suggested (only staple items that are overdue)
-    const isOverdue = daysSince >= avgDaysBetween * 0.8;
+    // Smart urgency scoring
+    const overdueRatio = daysSince / avgDaysBetween;
+    let urgency = 'low';
+    let urgencyScore = 0;
+
+    if (overdueRatio >= 1.5) {
+      urgency = 'critical'; // 50% overdue
+      urgencyScore = 3;
+    } else if (overdueRatio >= 1.2) {
+      urgency = 'high'; // 20% overdue
+      urgencyScore = 2;
+    } else if (overdueRatio >= 0.8) {
+      urgency = 'medium'; // approaching due
+      urgencyScore = 1;
+    }
+
+    // Boost urgency if items bought together are in current list (complementary items)
+    let complementaryBoost = 0;
+    let complementaryItems = [];
+    if (itemCoBuys[group.name]) {
+      Object.keys(itemCoBuys[group.name]).forEach(coProd => {
+        if (currentListNames.has(coProd.toLowerCase())) {
+          complementaryBoost += 1;
+          complementaryItems.push(coProd);
+        }
+      });
+    }
+
+    // Only suggest if medium urgency or higher, or if complementary items exist
+    const shouldSuggest = urgencyScore >= 1 || complementaryBoost > 0;
     const purchaseCount = purchases.length;
 
-    if (isOverdue) {
+    if (shouldSuggest) {
       suggestions.push({
         name: group.name,
         brand: group.brand,
         productType: group.productType,
         storeSection: group.storeSection,
         avgPrice: avgPrice,
+        minPrice: minPrice,
+        maxPrice: maxPrice,
+        isGoodDeal: isGoodDeal,
         daysSince: daysSince,
         avgDaysBetween: avgDaysBetween,
-        isOverdue: isOverdue,
-        purchaseCount: purchaseCount
+        urgency: urgency,
+        urgencyScore: urgencyScore + complementaryBoost,
+        purchaseCount: purchaseCount,
+        complementaryItems: complementaryItems
       });
     }
   });
 
   // Filter out dismissed suggestions and items already in shopping list
   const dismissed = loadDismissedSuggestions();
-  const currentList = loadShoppingList();
-  const currentListNames = new Set(currentList.map(item => item.name.toLowerCase()));
 
   const filteredSuggestions = suggestions.filter(sug => {
     const isDismissed = dismissed[sug.name.toLowerCase()];
@@ -5321,10 +5390,12 @@ function generateSuggestions() {
     return !isDismissed && !isInList;
   });
 
-  // Sort by urgency
+  // Smart sorting: urgency score first, then days overdue
   filteredSuggestions.sort((a, b) => {
-    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
-    return a.daysSince - b.daysSince;
+    if (b.urgencyScore !== a.urgencyScore) {
+      return b.urgencyScore - a.urgencyScore;
+    }
+    return b.daysSince - a.daysSince;
   });
 
   renderSuggestions(filteredSuggestions);
@@ -5348,21 +5419,54 @@ function renderSuggestions(suggestions) {
       ? `Buy every ${Math.round(sug.avgDaysBetween)} days`
       : `Bought ${sug.purchaseCount} times`;
 
-    const urgencyClass = sug.isOverdue ? 'background: #fff3cd; border-left: 4px solid #ffc107;' : 'background: #f9f9f9; border-left: 4px solid #ccc;';
+    // Smart urgency styling
+    let urgencyBadge = '';
+    let urgencyClass = '';
+    if (sug.urgency === 'critical') {
+      urgencyClass = 'background: #ffe0e0; border-left: 4px solid #dc3545;';
+      urgencyBadge = '<span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">CRITICAL</span>';
+    } else if (sug.urgency === 'high') {
+      urgencyClass = 'background: #fff3cd; border-left: 4px solid #ffc107;';
+      urgencyBadge = '<span style="background: #ffc107; color: #333; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">HIGH</span>';
+    } else if (sug.urgency === 'medium') {
+      urgencyClass = 'background: #e7f3ff; border-left: 4px solid #0c63e4;';
+      urgencyBadge = '<span style="background: #0c63e4; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">DUE SOON</span>';
+    } else {
+      urgencyClass = 'background: #f9f9f9; border-left: 4px solid #ccc;';
+    }
+
+    // Price deal indicator
+    const dealBadge = sug.isGoodDeal
+      ? '<span style="background: #28a745; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">💰 GOOD DEAL</span>'
+      : '';
+
+    // Complementary items info
+    const complementaryText = sug.complementaryItems && sug.complementaryItems.length > 0
+      ? `<div style="font-size: 12px; color: #764ba2; margin-top: 5px; font-weight: 500;">
+           🔗 Often bought with: ${sug.complementaryItems.slice(0, 2).join(', ')}${sug.complementaryItems.length > 2 ? '...' : ''}
+         </div>`
+      : '';
+
+    // Urgency icon
+    let urgencyIcon = '';
+    if (sug.urgency === 'critical') urgencyIcon = '🔴 ';
+    else if (sug.urgency === 'high') urgencyIcon = '⚠️ ';
+    else if (sug.urgency === 'medium') urgencyIcon = '🔵 ';
 
     html += `
       <div style="${urgencyClass} padding: 15px; margin-bottom: 10px; border-radius: 5px;">
         <div style="display: flex; justify-content: space-between; align-items: start;">
           <div style="flex: 1;">
-            <div style="font-weight: bold; font-size: 16px; margin-bottom: 5px;">
-              ${sug.isOverdue ? '⚠️ ' : ''}${sug.name}
+            <div style="font-weight: bold; font-size: 16px; margin-bottom: 5px; display: flex; align-items: center;">
+              ${urgencyIcon}${sug.name}${urgencyBadge}${dealBadge}
             </div>
             <div style="font-size: 13px; color: #666; margin-bottom: 5px;">
               ${frequencyText} • Last bought ${sug.daysSince} days ago
             </div>
             <div style="font-size: 13px; color: #666;">
-              ~${sug.avgPrice.toFixed(2)} kr
+              ~${sug.avgPrice.toFixed(2)} kr (range: ${sug.minPrice.toFixed(2)} - ${sug.maxPrice.toFixed(2)} kr)
             </div>
+            ${complementaryText}
           </div>
           <div style="display: flex; gap: 8px;">
             <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.avgPrice})" style="margin: 0; background: #28a745;">
@@ -6004,32 +6108,183 @@ function saveManualReceipt() {
 
 // Add manual item
 function addManualItem() {
-  const name = prompt('Item name:');
-  if (!name || !name.trim()) return;
+  // Get all previously purchased products for autocomplete
+  const productLibrary = buildProductLibrary();
+  const customMappings = loadCustomMappings();
+
+  // Build searchable product list
+  const products = productLibrary.map(p => {
+    const standardName = window.ProductCategories.standardizeProduct(p.rawName);
+    const mapping = customMappings[p.rawName] || {};
+    const productName = mapping.productName || standardName;
+
+    return {
+      name: productName,
+      category: p.productType || '',
+      storeSection: p.storeSection || '',
+      avgPrice: p.averagePrice || 0,
+      lastPurchased: p.lastSeen || '',
+      purchaseCount: p.count || 0
+    };
+  });
+
+  // Remove duplicates (same product name)
+  const uniqueProducts = {};
+  products.forEach(p => {
+    if (!uniqueProducts[p.name] || uniqueProducts[p.name].purchaseCount < p.purchaseCount) {
+      uniqueProducts[p.name] = p;
+    }
+  });
+
+  const productList = Object.values(uniqueProducts).sort((a, b) => a.name.localeCompare(b.name));
+
+  // Show modal with autocomplete
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>➕ Add Item to Shopping List</h2>
+    <p style="color: #666; margin-bottom: 20px;">Search from previously purchased items or add new</p>
+
+    <div style="margin-bottom: 20px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">Search Product</label>
+      <input type="text" id="product-search" placeholder="Type to search..."
+             style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;"
+             oninput="filterProductSuggestions()" onfocus="showProductSuggestions()">
+
+      <div id="product-suggestions" style="display: none; max-height: 300px; overflow-y: auto; border: 2px solid #667eea; border-top: none; border-radius: 0 0 8px 8px; background: white; position: relative; z-index: 1000;">
+        <!-- Suggestions will appear here -->
+      </div>
+    </div>
+
+    <div id="selected-product-info" style="display: none; background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+      <!-- Selected product info -->
+    </div>
+
+    <div style="margin-bottom: 15px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">Or enter new item</label>
+      <input type="text" id="new-item-name" placeholder="New item name..."
+             style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+    </div>
+
+    <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+      <div style="flex: 1;">
+        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Category</label>
+        <select id="item-category" style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+          ${STORE_CATEGORIES.map(cat => `<option value="${cat.id}">${cat.icon} ${cat.name}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex: 1;">
+        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Est. Price (kr)</label>
+        <input type="number" id="item-price" value="0" step="0.01" min="0"
+               style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button onclick="confirmAddManualItem()" class="btn" style="background: #28a745; padding: 12px 24px; flex: 1;">
+        ✓ Add to List
+      </button>
+      <button onclick="closeModal()" class="btn" style="background: #999; padding: 12px 24px;">
+        Cancel
+      </button>
+    </div>
+  `;
+
+  // Store product list in window for access by other functions
+  window.addItemProductList = productList;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Focus search input
+  setTimeout(() => {
+    document.getElementById('product-search').focus();
+  }, 100);
+}
+
+function showProductSuggestions() {
+  const suggestionsDiv = document.getElementById('product-suggestions');
+  suggestionsDiv.style.display = 'block';
+  filterProductSuggestions();
+}
+
+function filterProductSuggestions() {
+  const searchTerm = document.getElementById('product-search').value.toLowerCase();
+  const suggestionsDiv = document.getElementById('product-suggestions');
+  const products = window.addItemProductList || [];
+
+  const filtered = products.filter(p => p.name.toLowerCase().includes(searchTerm));
+
+  if (filtered.length === 0) {
+    suggestionsDiv.innerHTML = '<div style="padding: 15px; color: #999; text-align: center;">No matching products found</div>';
+    return;
+  }
+
+  suggestionsDiv.innerHTML = filtered.slice(0, 20).map(p => `
+    <div style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; hover:background: #f5f5f5;"
+         onmousedown="selectProduct('${p.name.replace(/'/g, "\\'")}', '${p.storeSection}', ${p.avgPrice})"
+         onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+      <div style="font-weight: 500;">${p.name}</div>
+      <div style="font-size: 11px; color: #666; margin-top: 3px;">
+        ${p.category || 'No category'} • ~${p.avgPrice.toFixed(2)} kr • Bought ${p.purchaseCount} times
+      </div>
+    </div>
+  `).join('');
+}
+
+function selectProduct(name, storeSection, avgPrice) {
+  document.getElementById('product-search').value = name;
+  document.getElementById('new-item-name').value = '';
+  document.getElementById('item-category').value = storeSection || 'skafferi';
+  document.getElementById('item-price').value = avgPrice.toFixed(2);
+  document.getElementById('product-suggestions').style.display = 'none';
+
+  const infoDiv = document.getElementById('selected-product-info');
+  infoDiv.style.display = 'block';
+  infoDiv.innerHTML = `
+    <div style="font-size: 14px; color: #0c63e4;">
+      ✓ Selected: <strong>${name}</strong> (~${avgPrice.toFixed(2)} kr)
+    </div>
+  `;
+}
+
+function confirmAddManualItem() {
+  const searchName = document.getElementById('product-search').value.trim();
+  const newName = document.getElementById('new-item-name').value.trim();
+  const name = searchName || newName;
+
+  if (!name) {
+    alert('Please enter or select a product name');
+    return;
+  }
+
+  const category = document.getElementById('item-category').value;
+  const price = parseFloat(document.getElementById('item-price').value) || 0;
 
   const list = loadShoppingList();
 
-  // Ask for category
-  const categoryOptions = STORE_CATEGORIES.map((c, i) => `${i + 1}. ${c.icon} ${c.name}`).join('\n');
-  const categoryInput = prompt(`Select category:\n\n${categoryOptions}\n\nEnter number (1-${STORE_CATEGORIES.length}):`);
-
-  const categoryIndex = parseInt(categoryInput) - 1;
-  const category = (categoryIndex >= 0 && categoryIndex < STORE_CATEGORIES.length)
-    ? STORE_CATEGORIES[categoryIndex].id
-    : 'skafferi';
+  // Check if already in list
+  if (list.find(item => item.name.toLowerCase() === name.toLowerCase())) {
+    alert('This item is already in your shopping list');
+    return;
+  }
 
   const newItem = {
     id: Date.now().toString(),
-    name: name.trim(),
+    name: name,
     category: category,
     checked: false,
-    estimatedPrice: 0,
+    quantity: 1,
+    estimatedPrice: price,
     isRecurrent: false,
     addedDate: new Date().toISOString()
   };
 
   list.push(newItem);
   saveShoppingList(list);
+  closeModal();
   renderShoppingList();
   showMessage(`Added "${name}" to your list`, 'success');
 }
@@ -6040,7 +6295,7 @@ function addManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v2.01
+  v2.02
 </footer>
 
 </body>
