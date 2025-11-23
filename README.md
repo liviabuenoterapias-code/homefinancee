@@ -2,6 +2,25 @@
 
 A web-based PDF receipt parser specifically designed for Willys grocery store receipts (Swedish format).
 
+**Current Version:** v2.02 (2025-01-23)
+
+## 📚 Documentation
+
+- **[CHANGELOG.md](CHANGELOG.md)** - Complete version history and technical details
+- **[SHOPPING-LIST-GUIDE.md](SHOPPING-LIST-GUIDE.md)** - Comprehensive guide to the smart shopping list feature
+- **[FIXES-APPLIED.md](FIXES-APPLIED.md)** - v2.0-beta bug fixes documentation
+
+## 🆕 What's New in v2.02
+
+### Smart Shopping List
+- **Autocomplete Add Item** - Search from your purchase history with live filtering
+- **Intelligent Suggestions** with multi-level urgency scoring (Critical/High/Due Soon)
+- **Complementary Items** - Detects items you buy together and suggests them contextually
+- **Price Awareness** - Shows good deals when prices are below your historical median
+- **Smart Sorting** - Priority based on urgency score and complementary relationships
+
+See [SHOPPING-LIST-GUIDE.md](SHOPPING-LIST-GUIDE.md) for complete details.
+
 ## What's Fixed
 
 The parser had issues missing many items from receipts. Here's what was improved:
@@ -76,6 +95,7 @@ Now supports **3 different item formats**:
 
 ## Features
 
+### Receipt Parser
 - ✅ **Batch processing** - Upload multiple PDFs at once
 - ✅ **Duplicate detection** - Prevents adding the same receipt twice
 - ✅ **Local storage** - Receipts saved in browser (survives page refresh)
@@ -83,6 +103,31 @@ Now supports **3 different item formats**:
 - ✅ **CSV export** - Export all data for analysis
 - ✅ **Discount tracking** - Captures Willys Plus and other discounts
 - ✅ **Statistics** - Total spent, saved, items count
+
+### Product Library
+- ✅ **Custom product naming** - Rename products for consistency
+- ✅ **Tagging system** - Tag products by household member, meal type, etc.
+- ✅ **Category management** - Organize by product type and store section
+- ✅ **Quality checks** - Automated suggestions for data improvements
+- ✅ **Bulk operations** - Edit multiple products at once
+
+### Analysis
+- ✅ **Staple products** - Identify regularly purchased items
+- ✅ **Price history** - Track price changes over time
+- ✅ **Discount analysis** - See which products go on sale most often
+- ✅ **Category spending** - Breakdown spending by food category
+- ✅ **Purchase patterns** - Understand weekly, bi-weekly, or monthly habits
+- ✅ **Sortable tables** - Sort by any column with pagination
+
+### Shopping List (v2.02)
+- ✅ **Smart suggestions** - AI-powered recommendations based on purchase history
+- ✅ **Urgency scoring** - Critical/High/Medium priority levels
+- ✅ **Complementary items** - Suggests items you buy together
+- ✅ **Price awareness** - Good deal detection from historical prices
+- ✅ **Autocomplete add** - Search from purchase history with product details
+- ✅ **Category grouping** - Items organized by store section
+- ✅ **Quantity control** - Adjust quantities with +/- buttons
+- ✅ **Price estimation** - Total cost estimation before shopping
 
 ## Technical Details
 
@@ -195,8 +240,14 @@ Requires: ES6+ JavaScript, PDF.js library (loaded via CDN)
 ## Future Improvements
 
 Possible enhancements:
-- Support for other store formats
+- Support for other store formats (ICA, Coop, etc.)
 - OCR integration for scanned images
-- Category auto-detection
-- Price trend analysis
-- Monthly spending reports
+- ✅ ~~Category auto-detection~~ (Implemented in v2.0)
+- ✅ ~~Price trend analysis~~ (Implemented in v2.0)
+- ✅ ~~Monthly spending reports~~ (Implemented in v2.0)
+- ✅ ~~Smart shopping list~~ (Implemented in v2.02)
+- Seasonal pattern detection
+- Store-specific price tracking
+- Meal planning integration
+- Recipe-based suggestions
+- Shared shopping lists (with privacy considerations)
