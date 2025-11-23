@@ -989,8 +989,8 @@ function showProductsByTag(tag) {
 
     const customMappings = loadCustomMappings();
 
-    // Find all products with this tag - use the SAME standardization method as analysis
-    const productStandardNames = new Set();
+    // Find all RAW NAMES with this tag
+    const taggedRawNames = new Set();
     const debugInfo = {
       totalTagged: 0,
       foundInReceipts: 0,
@@ -1000,54 +1000,65 @@ function showProductsByTag(tag) {
     Object.entries(customMappings).forEach(([rawName, mapping]) => {
       if (mapping.tags && mapping.tags.includes(tag)) {
         debugInfo.totalTagged++;
-
-        // Use the SAME standardization method that analysis uses
-        const standardName = window.ProductCategories.standardizeProduct(rawName);
-
-        // Check if this product exists in analysis data
-        const history = analysisInstance.getPriceHistory(standardName);
-        if (history) {
-          productStandardNames.add(standardName);
-          debugInfo.foundInReceipts++;
-        } else {
-          debugInfo.notFoundInReceipts.push({
-            rawName,
-            standardName,
-            productName: mapping.productName
-          });
-        }
+        taggedRawNames.add(rawName);
       }
     });
 
-  if (productStandardNames.size === 0) {
-    const notFoundList = debugInfo.notFoundInReceipts.map(p => `  • ${p.rawName}`).join('\n');
-    alert(`No products found with tag "${tag}" in any receipts.\n\n${debugInfo.totalTagged} products are tagged with "${tag}", but none appear in uploaded receipts.\n\nTagged products:\n${notFoundList}\n\nThese products may have been tagged but never purchased, or the receipts containing them haven't been uploaded.`);
-    return;
-  }
-
-  // Get purchase data for these products
-  const productsData = [];
-  productStandardNames.forEach(standardName => {
-    console.log('Getting price history for:', standardName);
-    const history = analysisInstance.getPriceHistory(standardName);
-    console.log('  -> History:', history);
-    if (history) {
-      const totalQuantity = history.purchases.reduce((sum, p) => sum + p.quantity, 0);
-      const totalSpent = history.purchases.reduce((sum, p) => sum + p.totalPrice, 0);
-      const totalDiscount = history.purchases.reduce((sum, p) => sum + p.discount, 0);
-
-      productsData.push({
-        name: standardName,
-        category: history.category,
-        totalQuantity,
-        totalSpent,
-        totalDiscount,
-        purchases: history.purchases.length
-      });
-    } else {
-      console.log('  -> No history found!');
+    if (taggedRawNames.size === 0) {
+      alert(`No products are tagged with "${tag}".`);
+      return;
     }
-  });
+
+    // Get purchases but ONLY from receipts where the raw name matches a tagged name
+    const productGroups = {};
+
+    allReceipts.forEach(receipt => {
+      if (!receipt.items || !receipt.date) return;
+
+      receipt.items.forEach(item => {
+        // Only process items whose raw name has the selected tag
+        if (!taggedRawNames.has(item.name)) return;
+
+        // Get standardized product name
+        const standardName = window.ProductCategories.standardizeProduct(item.name);
+        const mapping = customMappings[item.name] || {};
+        const productName = mapping.productName || standardName;
+        const category = window.ProductCategories.getCategory(standardName, item.name);
+
+        if (!productGroups[productName]) {
+          productGroups[productName] = {
+            name: productName,
+            category: category,
+            purchases: [],
+            totalQuantity: 0,
+            totalSpent: 0,
+            totalDiscount: 0
+          };
+        }
+
+        productGroups[productName].purchases.push({
+          date: receipt.date,
+          quantity: item.quantity,
+          totalPrice: item.totalPrice,
+          discount: item.discount
+        });
+        productGroups[productName].totalQuantity += item.quantity;
+        productGroups[productName].totalSpent += item.totalPrice;
+        productGroups[productName].totalDiscount += item.discount;
+      });
+    });
+
+    if (Object.keys(productGroups).length === 0) {
+      const taggedList = Array.from(taggedRawNames).map(r => `  • ${r}`).join('\n');
+      alert(`No receipts found with tag "${tag}".\n\n${taggedRawNames.size} products are tagged with "${tag}":\n${taggedList}\n\nThese products haven't been purchased yet or their receipts haven't been uploaded.`);
+      return;
+    }
+
+    // Convert to array and add purchase count
+    const productsData = Object.values(productGroups).map(group => ({
+      ...group,
+      purchases: group.purchases.length
+    }));
 
   console.log('Final productsData:', productsData);
 
@@ -6029,7 +6040,7 @@ function addManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v2.0
+  v2.01
 </footer>
 
 </body>
