@@ -5260,7 +5260,7 @@ function saveDismissedSuggestionsV3(dismissed) {
 
 // v3.0: Weekly pattern detection - returns % of weeks item was purchased
 function calculateWeeklyFrequency(purchases) {
-  if (purchases.length < 2) return 0;
+  if (purchases.length < 4) return 0; // Need at least 4 purchases for pattern
 
   const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
   const firstPurchase = sortedDates[0];
@@ -5268,17 +5268,29 @@ function calculateWeeklyFrequency(purchases) {
 
   // Calculate total weeks from first to last purchase
   const totalDays = (lastPurchase - firstPurchase) / (1000 * 60 * 60 * 24);
-  const totalWeeks = Math.max(1, Math.ceil(totalDays / 7));
 
-  // Group purchases by week
-  const weeks = new Set();
+  // Require at least 4 weeks of data to establish weekly pattern
+  if (totalDays < 28) return 0;
+
+  const totalWeeks = Math.ceil(totalDays / 7);
+
+  // Group purchases by week (and by unique date to avoid same-day duplicates)
+  const weekDates = new Map(); // week -> Set of unique dates
   purchases.forEach(p => {
     const weekNumber = Math.floor((p.date - firstPurchase) / (1000 * 60 * 60 * 24 * 7));
-    weeks.add(weekNumber);
+    const dateKey = p.date.toDateString();
+
+    if (!weekDates.has(weekNumber)) {
+      weekDates.set(weekNumber, new Set());
+    }
+    weekDates.get(weekNumber).add(dateKey);
   });
 
+  // Count weeks with at least one purchase
+  const weeksWithPurchases = weekDates.size;
+
   // Return percentage of weeks with purchases
-  return (weeks.size / totalWeeks) * 100;
+  return (weeksWithPurchases / totalWeeks) * 100;
 }
 
 // v3.0: Generate suggestions based on purchase history
@@ -5382,11 +5394,17 @@ function generateSuggestions() {
     // Calculate average days between purchases
     let avgDaysBetween = 999;
     if (purchases.length >= 2) {
-      let totalDays = 0;
-      for (let i = 1; i < sortedDates.length; i++) {
-        totalDays += (sortedDates[i] - sortedDates[i-1]) / (1000 * 60 * 60 * 24);
+      // Get unique purchase dates (avoid same-day duplicates)
+      const uniqueDates = [...new Set(sortedDates.map(d => d.toDateString()))].map(ds => new Date(ds));
+      uniqueDates.sort((a, b) => a - b);
+
+      if (uniqueDates.length >= 2) {
+        let totalDays = 0;
+        for (let i = 1; i < uniqueDates.length; i++) {
+          totalDays += (uniqueDates[i] - uniqueDates[i-1]) / (1000 * 60 * 60 * 24);
+        }
+        avgDaysBetween = Math.max(1, totalDays / (uniqueDates.length - 1)); // Minimum 1 day
       }
-      avgDaysBetween = totalDays / (sortedDates.length - 1);
     }
 
     // Calculate overdue ratio for staples
