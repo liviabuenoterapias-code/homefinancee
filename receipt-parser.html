@@ -5715,7 +5715,7 @@ function mapCategoryToStore(analysisCategory) {
   return mapping[analysisCategory] || 'skafferi';
 }
 
-// v3.0: Render shopping list - AUTO-HIDES checked items
+// v3.0: Render shopping list - AUTO-HIDES checked items, AUTO-SYNCS categories from Product Library
 function renderShoppingList() {
   const list = loadShoppingList();
   const itemsDiv = document.getElementById('shopping-list-items');
@@ -5734,6 +5734,10 @@ function renderShoppingList() {
 
   emptyDiv.style.display = 'none';
 
+  // v3.0: Load Product Library to get current categories
+  const customMappings = loadCustomMappings();
+  let needsUpdate = false;
+
   // Group by category (only unchecked items)
   const grouped = {};
   STORE_CATEGORIES.forEach(cat => {
@@ -5741,13 +5745,38 @@ function renderShoppingList() {
   });
 
   uncheckedList.forEach(item => {
-    if (grouped[item.category]) {
-      grouped[item.category].push(item);
+    // v3.0: Look up current category from Product Library
+    // Try to find matching product in customMappings by name
+    let currentCategory = item.category; // default to stored category
+
+    // Search through all receipt names to find one that maps to this product
+    const matchingMapping = Object.entries(customMappings).find(([receiptName, mapping]) => {
+      const mappedName = mapping.productName || window.ProductCategories.standardizeProduct(receiptName);
+      return mappedName.toLowerCase() === item.name.toLowerCase();
+    });
+
+    if (matchingMapping && matchingMapping[1].storeSection) {
+      currentCategory = matchingMapping[1].storeSection;
+
+      // Update stored category if it changed
+      if (item.category !== currentCategory) {
+        item.category = currentCategory;
+        needsUpdate = true;
+      }
+    }
+
+    if (grouped[currentCategory]) {
+      grouped[currentCategory].push(item);
     } else {
       // Default to skafferi if category not found
       grouped['skafferi'].push(item);
     }
   });
+
+  // Save updated categories back to localStorage
+  if (needsUpdate) {
+    saveShoppingList(list);
+  }
 
   // Calculate stats (only unchecked items)
   const uncheckedCount = uncheckedList.length;
