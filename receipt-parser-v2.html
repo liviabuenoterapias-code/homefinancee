@@ -5372,6 +5372,11 @@ function generateSuggestions() {
     const weeklyFrequency = calculateWeeklyFrequency(purchases);
     const isWeekly = weeklyFrequency >= 90; // 90% threshold
 
+    // Debug: Log items close to weekly threshold
+    if (weeklyFrequency > 0 && weeklyFrequency < 90 && purchases.length > 20) {
+      console.log(`Not quite weekly: ${group.name} - ${weeklyFrequency.toFixed(1)}% of weeks, ${purchases.length} purchases`);
+    }
+
     // Check if it's a staple
     const isStaple = stapleNames.has(group.name.toLowerCase());
 
