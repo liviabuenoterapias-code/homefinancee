@@ -328,6 +328,11 @@ window.addEventListener('load', () => {
     allReceipts = JSON.parse(saved);
     if (allReceipts.length > 0) {
       displayAllReceipts();
+
+      // v3.0: Generate suggestions after receipts are loaded
+      generateSuggestions();
+      renderDismissedList();
+      renderSnoozedList();
     }
   }
 });
@@ -3164,14 +3169,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderShoppingList();
   }
 
-  // v3.0: Auto-generate suggestions on page load
-  if (allReceipts && allReceipts.length > 0) {
-    generateSuggestions();
-  }
-
-  // v3.0: Render management lists
-  renderDismissedList();
-  renderSnoozedList();
+  // v3.0: Suggestions are generated in window.load after receipts are loaded
 });
 
 // Handle adding a new category
