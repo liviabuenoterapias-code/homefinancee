@@ -2,7 +2,7 @@
 
 A web-based PDF receipt parser specifically designed for Willys grocery store receipts (Swedish format).
 
-**Current Version:** v2.04 (2025-01-23)
+**Current Version:** v3.0 (2025-01-24)
 
 ## 📚 Documentation
 
@@ -10,27 +10,31 @@ A web-based PDF receipt parser specifically designed for Willys grocery store re
 - **[SHOPPING-LIST-GUIDE.md](SHOPPING-LIST-GUIDE.md)** - Comprehensive guide to the smart shopping list feature
 - **[FIXES-APPLIED.md](FIXES-APPLIED.md)** - v2.0-beta bug fixes documentation
 
-## 🆕 What's New in v2.04
+## 🆕 What's New in v3.0
 
-### Fixed Clear Suggestions Button
-- **Immediate Visual Feedback** - Button now updates UI instantly after clearing suggestions
-- **Success Message** - Shows confirmation when suggestions are cleared and regenerated
-- **Better UX** - No need to refresh page to see changes
+### Major Shopping List Redesign
 
-## Recent Updates
+**Automatic & Intelligent:**
+- **Auto-Generate Suggestions** - Suggestions appear automatically on page load
+- **Weekly Pattern Detection** - Identifies items purchased in 90%+ of weeks (top priority)
+- **Latest Price Strategy** - Uses most recent purchase price with conservative rounding
 
-### v2.03 - Improved Shopping List Accuracy
-- **Removed "Good Deal" Badge** - Was misleading as it was based on past prices, not current store prices
-- **Price Range Display** - Shows historical price range to help you make informed decisions
-- **Honest Suggestions** - No false claims about current pricing
+**Enhanced Control:**
+- **Three Actions** - Add, Snooze (7 days), or Dismiss (permanent) for each suggestion
+- **Management Sections** - View and restore dismissed/snoozed items
+- **Auto-Hide Checked** - Items disappear when checked, keeping list clean while shopping
 
-### v2.02 - Smart Shopping List Features
-- **Autocomplete Add Item** - Search from your purchase history with live filtering
-- **Intelligent Suggestions** with multi-level urgency scoring (Critical/High/Due Soon)
-- **Complementary Items** - Detects items you buy together and suggests them contextually
-- **Smart Sorting** - Priority based on urgency score and complementary relationships
+**Smarter Pricing:**
+- **Price Rounding** - Always rounds UP to .00 or .50 for conservative budgeting
+- **Latest Purchase Data** - Uses most recent price, not average
 
-See [SHOPPING-LIST-GUIDE.md](SHOPPING-LIST-GUIDE.md) for complete details.
+**Removed Features:**
+- Manual "Generate Suggestions" button (now automatic)
+- "Clear Suggestions" button (not needed)
+- "Often bought with" complementary items
+- "Good Deal" detection (was misleading)
+
+See [CHANGELOG.md](CHANGELOG.md) for complete technical details.
 
 ## What's Fixed
 
@@ -130,16 +134,19 @@ Now supports **3 different item formats**:
 - ✅ **Purchase patterns** - Understand weekly, bi-weekly, or monthly habits
 - ✅ **Sortable tables** - Sort by any column with pagination
 
-### Shopping List (v2.04)
-- ✅ **Smart suggestions** - AI-powered recommendations based on purchase history
-- ✅ **Urgency scoring** - Critical/High/Medium priority levels
-- ✅ **Complementary items** - Suggests items you buy together
-- ✅ **Price history** - Shows historical price ranges for informed decisions
-- ✅ **Autocomplete add** - Search from purchase history with product details
+### Shopping List (v3.0)
+- ✅ **Auto-generate suggestions** - Appears automatically on page load
+- ✅ **Weekly pattern detection** - Identifies items purchased in 90%+ of weeks
+- ✅ **Three-action system** - Add, Snooze (7 days), or Dismiss each suggestion
+- ✅ **Management sections** - View and restore dismissed/snoozed items
+- ✅ **Auto-hide checked items** - Items disappear when checked while shopping
+- ✅ **Latest price strategy** - Uses most recent purchase price, not average
+- ✅ **Conservative price rounding** - Always rounds UP to .00 or .50
+- ✅ **Autocomplete add** - Search from purchase history (shows on typing only)
+- ✅ **Priority-based sorting** - WEEKLY items first, then overdue staples
 - ✅ **Category grouping** - Items organized by store section
 - ✅ **Quantity control** - Adjust quantities with +/- buttons
 - ✅ **Price estimation** - Total cost estimation before shopping
-- ✅ **Clear suggestions** - Immediate visual feedback when clearing suggestions
 
 ## Technical Details
 

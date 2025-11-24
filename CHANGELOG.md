@@ -1,5 +1,199 @@
 # Receipt Parser - Changelog
 
+## v3.0 - 2025-01-24
+
+### Major Rebuild - Smart Shopping List Redesign
+
+Complete redesign of the shopping list feature with new workflow and enhanced intelligence.
+
+---
+
+#### 1. Weekly Pattern Detection
+
+**Feature:** Identifies items purchased weekly (90%+ of weeks)
+- Calculates percentage of weeks item was purchased
+- Top priority in suggestions (WEEKLY badge)
+- Shows "Purchased in X% of weeks" for context
+
+**Algorithm:**
+- Groups purchases by week from first to last purchase
+- Counts unique weeks with purchases
+- Calculates (weeks with purchases / total weeks) * 100
+- Items ≥ 90% threshold get WEEKLY priority
+
+**Location:** Lines 5238-5258 (calculateWeeklyFrequency function)
+
+---
+
+#### 2. Auto-Generate Suggestions on Page Load
+
+**Feature:** Suggestions appear automatically when receipts are loaded
+- No manual "Generate Suggestions" button needed
+- Updates automatically when items are added/dismissed/snoozed
+- Seamless user experience
+
+**Removed:**
+- "💡 Generate Suggestions" button
+- "🗑️ Clear Suggestions" button
+
+**Location:** Lines 3150-3157 (DOMContentLoaded handler)
+
+---
+
+#### 3. Three-Action Suggestion System
+
+**Feature:** Three distinct actions for each suggestion
+- ➕ **Add** - Add item to shopping list
+- 💤 **Snooze** - Hide for 7 days (can extend)
+- ❌ **Dismiss** - Hide permanently (can restore)
+
+**Implementation:**
+- Snooze stores snoozedUntil date (ISO string)
+- Dismiss stores dismissedAt timestamp
+- Separate localStorage keys: `dismissedSuggestions_v2`, `snoozedSuggestions_v2`
+
+**Functions:** dismissSuggestion(), snoozeSuggestion(), restoreDismissedSuggestion(), unSnoozeSuggestion(), extendSnoozeSuggestion()
+
+**Location:** Lines 5544-5614
+
+---
+
+#### 4. Price Rounding Algorithm
+
+**Feature:** Always rounds prices UP conservatively
+- If > X.50 → round to (X+1).00
+- If ≤ X.50 → round to X.50
+- If already .00 → keep as-is
+
+**Examples:**
+- 44.90 → 45.00
+- 12.30 → 12.50
+- 15.00 → 15.00
+- 23.75 → 24.00
+
+**Location:** Lines 5206-5213 (roundPriceUp function)
+
+---
+
+#### 5. Latest Purchase Data Strategy
+
+**Feature:** Uses most recent purchase price (not average)
+- More accurate for products with price variations
+- Better for items mapped to multiple receipt variants
+- Example: "milk" could be "ARLA MJÖLK" (15.90) or "WILLYS MJÖLK" (12.90) - uses latest
+
+**Add Item Modal:**
+- Builds product list from latest purchases
+- Applies price rounding
+- Dropdown appears only when typing (not on focus)
+
+**Location:** Lines 6302-6343 (addManualItem function)
+
+---
+
+#### 6. Auto-Hide Checked Items
+
+**Feature:** Items disappear immediately when checked
+- No need to manually clear checked items
+- Keeps list clean while shopping
+- "Clear Checked Items" permanently deletes them
+
+**Implementation:**
+- Filters out `checked: true` items before rendering
+- Shopping list only shows unchecked items
+- Stats calculated from unchecked items only
+
+**Location:** Lines 5676-5766 (renderShoppingList function)
+
+---
+
+#### 7. Management Sections
+
+**Feature:** Expandable sections for dismissed and snoozed items
+
+**Dismissed Suggestions:**
+- Shows all permanently dismissed items
+- Restore button brings item back to suggestions
+- Tracks dismissedAt timestamp
+
+**Snoozed Suggestions:**
+- Shows items temporarily hidden
+- Displays "Returns in X days"
+- Un-snooze or extend by 7 days
+- Auto-returns after snooze period expires
+
+**Location:** Lines 5805-5875 (renderDismissedList, renderSnoozedList functions)
+**UI:** Lines 287-308 (collapsible <details> elements)
+
+---
+
+#### 8. New Suggestion Priority System
+
+**Priority 1: 📅 WEEKLY Items**
+- Purchased in 90%+ of weeks
+- Green background with WEEKLY badge
+- Shows weekly frequency percentage
+
+**Priority 2: ⏰ Overdue Staples**
+- From top 50 most-purchased items only
+- Overdue based on historical frequency
+- Three urgency levels:
+  - 🔴 CRITICAL (50%+ overdue)
+  - ⚠️ HIGH (20%+ overdue)
+  - 🔵 OVERDUE (past due date)
+
+**Removed:**
+- "Often bought with" complementary items feature
+- Good deal detection
+
+**Location:** Lines 5260-5447 (generateSuggestions function)
+
+---
+
+### Technical Details
+
+**localStorage Structure:**
+```javascript
+{
+  shoppingList_v2: [items],
+  dismissedSuggestions_v2: {
+    "milk": { dismissedAt: timestamp, name: "Milk" }
+  },
+  snoozedSuggestions_v2: {
+    "butter": {
+      snoozedUntil: "2025-01-31T10:00:00.000Z",
+      snoozedAt: timestamp,
+      name: "Butter"
+    }
+  }
+}
+```
+
+**Suggestion Object:**
+```javascript
+{
+  name, storeSection, latestPrice, minPrice, maxPrice,
+  daysSince, avgDaysBetween, urgency, priority,
+  purchaseCount, weeklyFrequency, isWeekly, overdueRatio
+}
+```
+
+---
+
+### Files Modified
+- `receipt-parser-v2.html` - Development version
+- `receipt-parser.html` - Production version
+- Version updated: v2.04 → v3.0
+
+---
+
+### Breaking Changes
+- Old `dismissedSuggestions` format migrated to `dismissedSuggestions_v2`
+- Complementary items feature removed
+- Auto-generate means suggestions always present (no manual control)
+
+---
+
 ## v2.04 - 2025-01-23
 
 ### Fixed "Clear Suggestions" Button Feedback
@@ -246,6 +440,7 @@ See `FIXES-APPLIED.md` for detailed documentation:
 
 | Version | Date | Major Changes |
 |---------|------|---------------|
+| v3.0 | 2025-01-24 | Major rebuild: weekly pattern detection, auto-generate suggestions, three-action system (Add/Snooze/Dismiss), price rounding, latest purchase data, auto-hide checked items, management sections |
 | v2.04 | 2025-01-23 | Fixed "Clear Suggestions" button - immediate visual feedback |
 | v2.03 | 2025-01-23 | Removed misleading "good deal" badge (based on past prices, not current) |
 | v2.02 | 2025-01-23 | Smart shopping list: autocomplete add item, intelligent suggestions with urgency scoring, complementary items |

@@ -246,21 +246,15 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
   <div id="shopping-list-tab" class="tab-content">
     <div style="margin-bottom: 20px;">
       <h2>🛒 My Shopping List</h2>
-      <p style="color: #666; margin: 10px 0;">Smart shopping list based on your purchase history</p>
+      <p style="color: #666; margin: 10px 0;">Smart shopping list with automatic suggestions</p>
     </div>
 
     <!-- Action Buttons -->
     <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
-      <button class="btn" onclick="generateSuggestions()" style="background: linear-gradient(135deg, #28a745, #20c997);">
-        💡 Generate Suggestions
-      </button>
-      <button class="btn" onclick="clearAllSuggestions()" style="background: #f57c00;">
-        🗑️ Clear Suggestions
-      </button>
-      <button class="btn" onclick="clearCheckedItems()">
+      <button class="btn" onclick="clearCheckedItems()" style="background: #f57c00;">
         ✓ Clear Checked
       </button>
-      <button class="btn" onclick="addManualItem()">
+      <button class="btn" onclick="addManualItem()" style="background: #28a745;">
         ➕ Add Item
       </button>
     </div>
@@ -286,8 +280,31 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
       <div id="shopping-list-empty" style="text-align: center; padding: 60px 20px; color: #999;">
         <div style="font-size: 64px; margin-bottom: 20px;">🛒</div>
         <h3>Your shopping list is empty</h3>
-        <p style="margin-top: 10px;">Click "Generate Suggestions" to get started, or add items manually</p>
+        <p style="margin-top: 10px;">Suggestions appear automatically when you upload receipts</p>
       </div>
+    </div>
+
+    <!-- v3.0: Management Sections -->
+    <div style="margin-top: 40px;">
+      <!-- Dismissed Items -->
+      <details style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+        <summary style="cursor: pointer; font-weight: bold; color: #764ba2;">
+          ❌ Dismissed Suggestions
+        </summary>
+        <div id="dismissed-list" style="margin-top: 10px;">
+          <p style="color: #999; padding: 10px;">No dismissed suggestions</p>
+        </div>
+      </details>
+
+      <!-- Snoozed Items -->
+      <details style="background: #f9f9f9; padding: 15px; border-radius: 8px;">
+        <summary style="cursor: pointer; font-weight: bold; color: #764ba2;">
+          💤 Snoozed Suggestions
+        </summary>
+        <div id="snoozed-list" style="margin-top: 10px;">
+          <p style="color: #999; padding: 10px;">No snoozed suggestions</p>
+        </div>
+      </details>
     </div>
   </div>
   <!-- End Shopping List Tab -->
@@ -3146,6 +3163,15 @@ document.addEventListener('DOMContentLoaded', () => {
   if (list.length > 0) {
     renderShoppingList();
   }
+
+  // v3.0: Auto-generate suggestions on page load
+  if (allReceipts && allReceipts.length > 0) {
+    generateSuggestions();
+  }
+
+  // v3.0: Render management lists
+  renderDismissedList();
+  renderSnoozedList();
 });
 
 // Handle adding a new category
@@ -5202,10 +5228,67 @@ function saveShoppingList(list) {
   localStorage.setItem('shoppingList_v2', JSON.stringify(list));
 }
 
-// Generate suggestions based on purchase history
+// v3.0: Price rounding function - always rounds UP to .00 or .50
+function roundPriceUp(price) {
+  const cents = price % 1;
+  const whole = Math.floor(price);
+
+  if (cents === 0) return price; // Already .00
+  if (cents > 0.50) return whole + 1; // Round to next .00
+  return whole + 0.50; // Round to .50
+}
+
+// v3.0: Load snoozed suggestions from localStorage
+function loadSnoozedSuggestions() {
+  const saved = localStorage.getItem('snoozedSuggestions_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// v3.0: Save snoozed suggestions to localStorage
+function saveSnoozedSuggestions(snoozed) {
+  localStorage.setItem('snoozedSuggestions_v2', JSON.stringify(snoozed));
+}
+
+// v3.0: Load dismissed suggestions with new format
+function loadDismissedSuggestionsV3() {
+  const saved = localStorage.getItem('dismissedSuggestions_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// v3.0: Save dismissed suggestions with new format
+function saveDismissedSuggestionsV3(dismissed) {
+  localStorage.setItem('dismissedSuggestions_v2', JSON.stringify(dismissed));
+}
+
+// v3.0: Weekly pattern detection - returns % of weeks item was purchased
+function calculateWeeklyFrequency(purchases) {
+  if (purchases.length < 2) return 0;
+
+  const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
+  const firstPurchase = sortedDates[0];
+  const lastPurchase = sortedDates[sortedDates.length - 1];
+
+  // Calculate total weeks from first to last purchase
+  const totalDays = (lastPurchase - firstPurchase) / (1000 * 60 * 60 * 24);
+  const totalWeeks = Math.max(1, Math.ceil(totalDays / 7));
+
+  // Group purchases by week
+  const weeks = new Set();
+  purchases.forEach(p => {
+    const weekNumber = Math.floor((p.date - firstPurchase) / (1000 * 60 * 60 * 24 * 7));
+    weeks.add(weekNumber);
+  });
+
+  // Return percentage of weeks with purchases
+  return (weeks.size / totalWeeks) * 100;
+}
+
+// v3.0: Generate suggestions based on purchase history
+// Auto-generates on page load, prioritizes WEEKLY items first
 function generateSuggestions() {
   if (allReceipts.length === 0) {
-    showMessage('Upload some receipts first to get personalized suggestions', 'info');
+    const section = document.getElementById('suggestions-section');
+    if (section) section.style.display = 'none';
     return;
   }
 
@@ -5215,39 +5298,21 @@ function generateSuggestions() {
   }
 
   // Get top 50 staple products (purchased regularly)
-  const stapleProducts = analysisInstance.getStapleProducts(0.5); // Lower frequency threshold to get more items
+  const stapleProducts = analysisInstance.getStapleProducts(0.5);
   const top50Staples = stapleProducts.slice(0, 50);
-
-  // Create a set of staple product names for quick lookup
   const stapleNames = new Set(top50Staples.map(s => s.name.toLowerCase()));
 
   const customMappings = loadCustomMappings();
-  const suggestions = [];
-
-  // Group products by standardized product name from actual receipts
   const groupedProducts = {};
 
-  // Track items bought together (for complementary product suggestions)
-  const itemCoBuys = {}; // productName -> {coProduct: count}
-
-  // Process each receipt and each item
+  // Process each receipt and each item - process ALL items (not just staples) for weekly detection
   allReceipts.forEach(receipt => {
     if (!receipt.items || !receipt.date) return;
 
-    const receiptProducts = new Set();
-
     receipt.items.forEach(item => {
-      // Get standardized product name using same logic as product library
       const standardName = window.ProductCategories.standardizeProduct(item.name);
       const mapping = customMappings[item.name] || {};
       const productName = mapping.productName || standardName;
-
-      // ONLY process items that are in the top 50 staples
-      if (!stapleNames.has(productName.toLowerCase())) {
-        return;
-      }
-
-      receiptProducts.add(productName);
 
       const brand = mapping.brand || '';
       const productType = mapping.productType || '';
@@ -5277,43 +5342,46 @@ function generateSuggestions() {
       groupedProducts[productName].prices.push(unitPrice);
       groupedProducts[productName].totalSpent += item.totalPrice;
     });
-
-    // Track co-purchases (items bought together in same receipt)
-    const products = Array.from(receiptProducts);
-    products.forEach(prod1 => {
-      if (!itemCoBuys[prod1]) itemCoBuys[prod1] = {};
-      products.forEach(prod2 => {
-        if (prod1 !== prod2) {
-          itemCoBuys[prod1][prod2] = (itemCoBuys[prod1][prod2] || 0) + 1;
-        }
-      });
-    });
   });
 
-  // Get current shopping list to find complementary items
+  // Get current shopping list, dismissed, and snoozed items
   const currentList = loadShoppingList();
   const currentListNames = new Set(currentList.map(item => item.name.toLowerCase()));
+  const dismissed = loadDismissedSuggestionsV3();
+  const snoozed = loadSnoozedSuggestions();
 
-  // Calculate frequency and create suggestions with smart scoring
+  const now = new Date();
+  const suggestions = [];
+
+  // Calculate frequency and create suggestions
   Object.values(groupedProducts).forEach(group => {
     const purchases = group.purchases;
-    if (purchases.length === 0) return;
+    if (purchases.length < 2) return; // Need at least 2 purchases
 
-    // Calculate average price per unit
-    const totalQuantity = purchases.reduce((sum, p) => sum + p.quantity, 0);
-    const avgPrice = group.totalSpent / totalQuantity;
+    // Calculate weekly frequency
+    const weeklyFrequency = calculateWeeklyFrequency(purchases);
+    const isWeekly = weeklyFrequency >= 90; // 90% threshold
 
-    // Calculate price statistics
+    // Check if it's a staple
+    const isStaple = stapleNames.has(group.name.toLowerCase());
+
+    // Calculate average price per unit (use latest purchase price, not average)
+    const sortedByDate = purchases.sort((a, b) => b.date - a.date);
+    const latestPurchase = sortedByDate[0];
+    const latestPrice = latestPurchase.unitPrice;
+    const roundedPrice = roundPriceUp(latestPrice);
+
+    // Calculate price statistics for display
     const prices = group.prices.sort((a, b) => a - b);
     const minPrice = prices[0];
     const maxPrice = prices[prices.length - 1];
 
     // Calculate days since last purchase
     const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
-    const lastPurchase = sortedDates[sortedDates.length - 1];
-    const daysSince = Math.floor((new Date() - lastPurchase) / (1000 * 60 * 60 * 24));
+    const lastPurchaseDate = sortedDates[sortedDates.length - 1];
+    const daysSince = Math.floor((new Date() - lastPurchaseDate) / (1000 * 60 * 60 * 24));
 
-    // Calculate frequency (average days between purchases)
+    // Calculate average days between purchases
     let avgDaysBetween = 999;
     if (purchases.length >= 2) {
       let totalDays = 0;
@@ -5323,37 +5391,34 @@ function generateSuggestions() {
       avgDaysBetween = totalDays / (sortedDates.length - 1);
     }
 
-    // Smart urgency scoring
+    // Calculate overdue ratio for staples
     const overdueRatio = daysSince / avgDaysBetween;
-    let urgency = 'low';
-    let urgencyScore = 0;
+    const isOverdue = overdueRatio >= 1.0; // Overdue if past average interval
 
-    if (overdueRatio >= 1.5) {
-      urgency = 'critical'; // 50% overdue
-      urgencyScore = 3;
-    } else if (overdueRatio >= 1.2) {
-      urgency = 'high'; // 20% overdue
-      urgencyScore = 2;
-    } else if (overdueRatio >= 0.8) {
-      urgency = 'medium'; // approaching due
-      urgencyScore = 1;
+    // Determine if should suggest
+    let shouldSuggest = false;
+    let priority = 0; // 1 = WEEKLY, 0 = OVERDUE STAPLE
+    let urgency = 'none';
+
+    if (isWeekly) {
+      // Priority 1: Weekly items (regardless of staple status)
+      shouldSuggest = true;
+      priority = 1;
+      urgency = 'weekly';
+    } else if (isStaple && isOverdue) {
+      // Priority 2: Overdue staples (from top 50 only)
+      shouldSuggest = true;
+      priority = 0;
+
+      // Urgency for overdue staples
+      if (overdueRatio >= 1.5) {
+        urgency = 'critical';
+      } else if (overdueRatio >= 1.2) {
+        urgency = 'high';
+      } else {
+        urgency = 'medium';
+      }
     }
-
-    // Boost urgency if items bought together are in current list (complementary items)
-    let complementaryBoost = 0;
-    let complementaryItems = [];
-    if (itemCoBuys[group.name]) {
-      Object.keys(itemCoBuys[group.name]).forEach(coProd => {
-        if (currentListNames.has(coProd.toLowerCase())) {
-          complementaryBoost += 1;
-          complementaryItems.push(coProd);
-        }
-      });
-    }
-
-    // Only suggest if medium urgency or higher, or if complementary items exist
-    const shouldSuggest = urgencyScore >= 1 || complementaryBoost > 0;
-    const purchaseCount = purchases.length;
 
     if (shouldSuggest) {
       suggestions.push({
@@ -5361,40 +5426,53 @@ function generateSuggestions() {
         brand: group.brand,
         productType: group.productType,
         storeSection: group.storeSection,
-        avgPrice: avgPrice,
+        latestPrice: roundedPrice,
         minPrice: minPrice,
         maxPrice: maxPrice,
         daysSince: daysSince,
         avgDaysBetween: avgDaysBetween,
         urgency: urgency,
-        urgencyScore: urgencyScore + complementaryBoost,
-        purchaseCount: purchaseCount,
-        complementaryItems: complementaryItems
+        priority: priority,
+        purchaseCount: purchases.length,
+        weeklyFrequency: weeklyFrequency,
+        isWeekly: isWeekly,
+        overdueRatio: overdueRatio
       });
     }
   });
 
-  // Filter out dismissed suggestions and items already in shopping list
-  const dismissed = loadDismissedSuggestions();
-
+  // Filter out dismissed, snoozed, and items already in shopping list
   const filteredSuggestions = suggestions.filter(sug => {
-    const isDismissed = dismissed[sug.name.toLowerCase()];
-    const isInList = currentListNames.has(sug.name.toLowerCase());
-    return !isDismissed && !isInList;
+    const key = sug.name.toLowerCase();
+
+    // Check if dismissed
+    if (dismissed[key]) return false;
+
+    // Check if snoozed
+    if (snoozed[key]) {
+      const snoozedUntil = new Date(snoozed[key].snoozedUntil);
+      if (now < snoozedUntil) return false; // Still snoozed
+    }
+
+    // Check if already in list
+    if (currentListNames.has(key)) return false;
+
+    return true;
   });
 
-  // Smart sorting: urgency score first, then days overdue
+  // Sort: WEEKLY items first (priority=1), then OVERDUE STAPLES (priority=0)
+  // Within each priority group, sort by days overdue
   filteredSuggestions.sort((a, b) => {
-    if (b.urgencyScore !== a.urgencyScore) {
-      return b.urgencyScore - a.urgencyScore;
+    if (b.priority !== a.priority) {
+      return b.priority - a.priority; // WEEKLY (1) before OVERDUE (0)
     }
-    return b.daysSince - a.daysSince;
+    return b.daysSince - a.daysSince; // More overdue first
   });
 
   renderSuggestions(filteredSuggestions);
 }
 
-// Render suggestions
+// v3.0: Render suggestions with new format
 function renderSuggestions(suggestions) {
   const section = document.getElementById('suggestions-section');
   const list = document.getElementById('suggestions-list');
@@ -5412,34 +5490,38 @@ function renderSuggestions(suggestions) {
       ? `Buy every ${Math.round(sug.avgDaysBetween)} days`
       : `Bought ${sug.purchaseCount} times`;
 
-    // Smart urgency styling
+    // v3.0: Badge and styling based on urgency
     let urgencyBadge = '';
     let urgencyClass = '';
-    if (sug.urgency === 'critical') {
+    let urgencyIcon = '';
+
+    if (sug.urgency === 'weekly') {
+      // WEEKLY items - top priority
+      urgencyClass = 'background: #e8f5e9; border-left: 4px solid #4caf50;';
+      urgencyBadge = '<span style="background: #4caf50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">📅 WEEKLY</span>';
+      urgencyIcon = '📅 ';
+    } else if (sug.urgency === 'critical') {
       urgencyClass = 'background: #ffe0e0; border-left: 4px solid #dc3545;';
-      urgencyBadge = '<span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">CRITICAL</span>';
+      urgencyBadge = '<span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">⏰ CRITICAL</span>';
+      urgencyIcon = '🔴 ';
     } else if (sug.urgency === 'high') {
       urgencyClass = 'background: #fff3cd; border-left: 4px solid #ffc107;';
-      urgencyBadge = '<span style="background: #ffc107; color: #333; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">HIGH</span>';
+      urgencyBadge = '<span style="background: #ffc107; color: #333; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">⏰ HIGH</span>';
+      urgencyIcon = '⚠️ ';
     } else if (sug.urgency === 'medium') {
       urgencyClass = 'background: #e7f3ff; border-left: 4px solid #0c63e4;';
-      urgencyBadge = '<span style="background: #0c63e4; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">DUE SOON</span>';
+      urgencyBadge = '<span style="background: #0c63e4; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">⏰ OVERDUE</span>';
+      urgencyIcon = '🔵 ';
     } else {
       urgencyClass = 'background: #f9f9f9; border-left: 4px solid #ccc;';
     }
 
-    // Complementary items info
-    const complementaryText = sug.complementaryItems && sug.complementaryItems.length > 0
-      ? `<div style="font-size: 12px; color: #764ba2; margin-top: 5px; font-weight: 500;">
-           🔗 Often bought with: ${sug.complementaryItems.slice(0, 2).join(', ')}${sug.complementaryItems.length > 2 ? '...' : ''}
+    // Weekly frequency info for weekly items
+    const weeklyInfo = sug.isWeekly
+      ? `<div style="font-size: 12px; color: #4caf50; margin-top: 5px; font-weight: 500;">
+           Purchased in ${Math.round(sug.weeklyFrequency)}% of weeks
          </div>`
       : '';
-
-    // Urgency icon
-    let urgencyIcon = '';
-    if (sug.urgency === 'critical') urgencyIcon = '🔴 ';
-    else if (sug.urgency === 'high') urgencyIcon = '⚠️ ';
-    else if (sug.urgency === 'medium') urgencyIcon = '🔵 ';
 
     html += `
       <div style="${urgencyClass} padding: 15px; margin-bottom: 10px; border-radius: 5px;">
@@ -5452,16 +5534,19 @@ function renderSuggestions(suggestions) {
               ${frequencyText} • Last bought ${sug.daysSince} days ago
             </div>
             <div style="font-size: 13px; color: #666;">
-              ~${sug.avgPrice.toFixed(2)} kr (range: ${sug.minPrice.toFixed(2)} - ${sug.maxPrice.toFixed(2)} kr)
+              ~${sug.latestPrice.toFixed(2)} kr (range: ${sug.minPrice.toFixed(2)} - ${sug.maxPrice.toFixed(2)} kr)
             </div>
-            ${complementaryText}
+            ${weeklyInfo}
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.avgPrice})" style="margin: 0; background: #28a745;">
-              + Add
+          <div style="display: flex; gap: 6px; flex-direction: column;">
+            <button class="btn" onclick="addSuggestionToList('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.latestPrice})" style="margin: 0; background: #28a745; padding: 8px 16px; font-size: 13px;">
+              ➕ Add
             </button>
-            <button class="btn" onclick="dismissSuggestion('${sug.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #6c757d; padding: 8px 12px;">
-              Dismiss
+            <button class="btn" onclick="snoozeSuggestion('${sug.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #17a2b8; padding: 8px 16px; font-size: 13px;">
+              💤 Snooze
+            </button>
+            <button class="btn" onclick="dismissSuggestion('${sug.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #6c757d; padding: 8px 16px; font-size: 13px;">
+              ❌ Dismiss
             </button>
           </div>
         </div>
@@ -5472,29 +5557,89 @@ function renderSuggestions(suggestions) {
   list.innerHTML = html;
 }
 
-// Load dismissed suggestions from localStorage
+// v3.0: OLD functions kept for backward compatibility
 function loadDismissedSuggestions() {
   const saved = localStorage.getItem('dismissedSuggestions');
   return saved ? JSON.parse(saved) : {};
 }
 
-// Save dismissed suggestions to localStorage
 function saveDismissedSuggestions(dismissed) {
   localStorage.setItem('dismissedSuggestions', JSON.stringify(dismissed));
 }
 
-// Dismiss a suggestion
+// v3.0: Dismiss a suggestion permanently
 function dismissSuggestion(name) {
-  const dismissed = loadDismissedSuggestions();
-  dismissed[name.toLowerCase()] = Date.now();
-  saveDismissedSuggestions(dismissed);
+  const dismissed = loadDismissedSuggestionsV3();
+  dismissed[name.toLowerCase()] = {
+    dismissedAt: Date.now(),
+    name: name
+  };
+  saveDismissedSuggestionsV3(dismissed);
 
   // Regenerate suggestions to remove dismissed one
   generateSuggestions();
+  renderDismissedList();
   showMessage(`Dismissed "${name}"`, 'info');
 }
 
-// Add suggestion to shopping list
+// v3.0: Snooze a suggestion for 7 days
+function snoozeSuggestion(name) {
+  const snoozed = loadSnoozedSuggestions();
+  const snoozedUntil = new Date();
+  snoozedUntil.setDate(snoozedUntil.getDate() + 7);
+
+  snoozed[name.toLowerCase()] = {
+    snoozedUntil: snoozedUntil.toISOString(),
+    snoozedAt: Date.now(),
+    name: name
+  };
+  saveSnoozedSuggestions(snoozed);
+
+  // Regenerate suggestions to remove snoozed one
+  generateSuggestions();
+  renderSnoozedList();
+  showMessage(`Snoozed "${name}" for 7 days`, 'info');
+}
+
+// v3.0: Restore a dismissed suggestion
+function restoreDismissedSuggestion(name) {
+  const dismissed = loadDismissedSuggestionsV3();
+  delete dismissed[name.toLowerCase()];
+  saveDismissedSuggestionsV3(dismissed);
+
+  generateSuggestions();
+  renderDismissedList();
+  showMessage(`Restored "${name}"`, 'success');
+}
+
+// v3.0: Un-snooze a suggestion
+function unSnoozeSuggestion(name) {
+  const snoozed = loadSnoozedSuggestions();
+  delete snoozed[name.toLowerCase()];
+  saveSnoozedSuggestions(snoozed);
+
+  generateSuggestions();
+  renderSnoozedList();
+  showMessage(`Un-snoozed "${name}"`, 'success');
+}
+
+// v3.0: Extend snooze by another 7 days
+function extendSnoozeSuggestion(name) {
+  const snoozed = loadSnoozedSuggestions();
+  const existingSnoozed = snoozed[name.toLowerCase()];
+
+  if (existingSnoozed) {
+    const currentSnoozedUntil = new Date(existingSnoozed.snoozedUntil);
+    currentSnoozedUntil.setDate(currentSnoozedUntil.getDate() + 7);
+    existingSnoozed.snoozedUntil = currentSnoozedUntil.toISOString();
+  }
+
+  saveSnoozedSuggestions(snoozed);
+  renderSnoozedList();
+  showMessage(`Extended snooze for "${name}" by 7 days`, 'info');
+}
+
+// v3.0: Add suggestion to shopping list
 function addSuggestionToList(name, storeSection, estimatedPrice) {
   const list = loadShoppingList();
 
@@ -5507,9 +5652,9 @@ function addSuggestionToList(name, storeSection, estimatedPrice) {
   const newItem = {
     id: Date.now().toString(),
     name: name,
-    category: storeSection,  // Using 'category' field for backward compatibility, but it's actually storeSection
+    category: storeSection,
     checked: false,
-    quantity: 1,  // Default quantity
+    quantity: 1,
     estimatedPrice: estimatedPrice,
     isRecurrent: true,
     addedDate: new Date().toISOString()
@@ -5518,8 +5663,8 @@ function addSuggestionToList(name, storeSection, estimatedPrice) {
   list.push(newItem);
   saveShoppingList(list);
 
-  // Dismiss the suggestion after adding
-  dismissSuggestion(name);
+  // Remove from suggestions display
+  generateSuggestions();
 
   renderShoppingList();
   showMessage(`Added "${name}" to your list`, 'success');
@@ -5554,14 +5699,17 @@ function mapCategoryToStore(analysisCategory) {
   return mapping[analysisCategory] || 'skafferi';
 }
 
-// Render shopping list
+// v3.0: Render shopping list - AUTO-HIDES checked items
 function renderShoppingList() {
   const list = loadShoppingList();
   const itemsDiv = document.getElementById('shopping-list-items');
   const emptyDiv = document.getElementById('shopping-list-empty');
   const statsDiv = document.getElementById('list-stats');
 
-  if (list.length === 0) {
+  // v3.0: Filter out checked items (auto-hide)
+  const uncheckedList = list.filter(i => !i.checked);
+
+  if (uncheckedList.length === 0) {
     itemsDiv.innerHTML = '';
     emptyDiv.style.display = 'block';
     statsDiv.textContent = '0 items • Estimated: 0 kr';
@@ -5570,13 +5718,13 @@ function renderShoppingList() {
 
   emptyDiv.style.display = 'none';
 
-  // Group by category
+  // Group by category (only unchecked items)
   const grouped = {};
   STORE_CATEGORIES.forEach(cat => {
     grouped[cat.id] = [];
   });
 
-  list.forEach(item => {
+  uncheckedList.forEach(item => {
     if (grouped[item.category]) {
       grouped[item.category].push(item);
     } else {
@@ -5585,10 +5733,9 @@ function renderShoppingList() {
     }
   });
 
-  // Calculate stats
-  const uncheckedCount = list.filter(i => !i.checked).length;
-  const estimatedTotal = list
-    .filter(i => !i.checked)
+  // Calculate stats (only unchecked items)
+  const uncheckedCount = uncheckedList.length;
+  const estimatedTotal = uncheckedList
     .reduce((sum, i) => sum + ((i.estimatedPrice || 0) * (i.quantity || 1)), 0);
 
   statsDiv.textContent = `${uncheckedCount} items • Estimated: ${estimatedTotal.toFixed(0)} kr`;
@@ -5599,14 +5746,12 @@ function renderShoppingList() {
     const items = grouped[category.id];
     if (items.length === 0) return;
 
-    const uncheckedInCategory = items.filter(i => !i.checked).length;
-
     html += `
       <div style="margin-bottom: 20px;">
         <div style="background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 12px 15px; border-radius: 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
           <span>${category.icon} ${category.name}</span>
           <span style="background: rgba(255,255,255,0.3); padding: 2px 10px; border-radius: 12px; font-size: 12px;">
-            ${uncheckedInCategory}
+            ${items.length}
           </span>
         </div>
         <div style="background: #f9f9f9; padding: 10px; border-radius: 0 0 8px 8px;">
@@ -5614,10 +5759,10 @@ function renderShoppingList() {
             const quantity = item.quantity || 1;
             const totalPrice = (item.estimatedPrice || 0) * quantity;
             return `
-            <div style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; ${item.checked ? 'opacity: 0.5;' : ''}">
-              <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;">
+            <div style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0;">
+              <input type="checkbox" onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;">
               <div style="flex: 1;">
-                <div style="font-weight: 500; ${item.checked ? 'text-decoration: line-through;' : ''}">${item.name}</div>
+                <div style="font-weight: 500;">${item.name}</div>
                 ${item.estimatedPrice ? `
                   <div style="font-size: 12px; color: #666; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
                     <span>~${item.estimatedPrice.toFixed(2)} kr</span>
@@ -5681,6 +5826,78 @@ function deleteItem(itemId) {
   const filtered = list.filter(i => i.id !== itemId);
   saveShoppingList(filtered);
   renderShoppingList();
+}
+
+// v3.0: Render dismissed suggestions list
+function renderDismissedList() {
+  const dismissed = loadDismissedSuggestionsV3();
+  const dismissedDiv = document.getElementById('dismissed-list');
+
+  if (!dismissedDiv) return; // Element not in UI yet
+
+  const items = Object.values(dismissed);
+
+  if (items.length === 0) {
+    dismissedDiv.innerHTML = '<p style="color: #999; padding: 10px;">No dismissed suggestions</p>';
+    return;
+  }
+
+  let html = '<div style="margin-top: 10px;">';
+  items.forEach(item => {
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #e0e0e0;">
+        <span style="color: #666;">${item.name}</span>
+        <button class="btn" onclick="restoreDismissedSuggestion('${item.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #28a745; padding: 4px 12px; font-size: 12px;">
+          Restore
+        </button>
+      </div>
+    `;
+  });
+  html += '</div>';
+
+  dismissedDiv.innerHTML = html;
+}
+
+// v3.0: Render snoozed suggestions list
+function renderSnoozedList() {
+  const snoozed = loadSnoozedSuggestions();
+  const snoozedDiv = document.getElementById('snoozed-list');
+
+  if (!snoozedDiv) return; // Element not in UI yet
+
+  const items = Object.values(snoozed);
+
+  if (items.length === 0) {
+    snoozedDiv.innerHTML = '<p style="color: #999; padding: 10px;">No snoozed suggestions</p>';
+    return;
+  }
+
+  const now = new Date();
+  let html = '<div style="margin-top: 10px;">';
+  items.forEach(item => {
+    const snoozedUntil = new Date(item.snoozedUntil);
+    const daysLeft = Math.ceil((snoozedUntil - now) / (1000 * 60 * 60 * 24));
+
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #e0e0e0;">
+        <div>
+          <div style="color: #666;">${item.name}</div>
+          <div style="font-size: 11px; color: #999;">Returns in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}</div>
+        </div>
+        <div style="display: flex; gap: 4px;">
+          <button class="btn" onclick="unSnoozeSuggestion('${item.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #28a745; padding: 4px 12px; font-size: 12px;">
+            Un-snooze
+          </button>
+          <button class="btn" onclick="extendSnoozeSuggestion('${item.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #17a2b8; padding: 4px 12px; font-size: 12px;">
+            +7 days
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  html += '</div>';
+
+  snoozedDiv.innerHTML = html;
 }
 
 // Clear checked items
@@ -6099,36 +6316,48 @@ function saveManualReceipt() {
 }
 
 // Add manual item
+// v3.0: Add manual item with latest purchase data and price rounding
 function addManualItem() {
   // Get all previously purchased products for autocomplete
   const productLibrary = buildProductLibrary();
   const customMappings = loadCustomMappings();
 
-  // Build searchable product list
-  const products = productLibrary.map(p => {
-    const standardName = window.ProductCategories.standardizeProduct(p.rawName);
-    const mapping = customMappings[p.rawName] || {};
-    const productName = mapping.productName || standardName;
+  // v3.0: Build searchable product list with LATEST purchase data
+  const productsByName = {};
 
-    return {
-      name: productName,
-      category: p.productType || '',
-      storeSection: p.storeSection || '',
-      avgPrice: p.averagePrice || 0,
-      lastPurchased: p.lastSeen || '',
-      purchaseCount: p.count || 0
-    };
+  allReceipts.forEach(receipt => {
+    if (!receipt.items || !receipt.date) return;
+
+    receipt.items.forEach(item => {
+      const standardName = window.ProductCategories.standardizeProduct(item.name);
+      const mapping = customMappings[item.name] || {};
+      const productName = mapping.productName || standardName;
+      const storeSection = mapping.storeSection || '';
+      const productType = mapping.productType || '';
+
+      const unitPrice = item.totalPrice / (item.quantity || 1);
+      const receiptDate = new Date(receipt.date);
+
+      if (!productsByName[productName] || receiptDate > productsByName[productName].lastDate) {
+        productsByName[productName] = {
+          name: productName,
+          category: productType,
+          storeSection: storeSection,
+          latestPrice: unitPrice,
+          lastDate: receiptDate,
+          purchaseCount: (productsByName[productName]?.purchaseCount || 0) + 1
+        };
+      } else {
+        productsByName[productName].purchaseCount++;
+      }
+    });
   });
 
-  // Remove duplicates (same product name)
-  const uniqueProducts = {};
-  products.forEach(p => {
-    if (!uniqueProducts[p.name] || uniqueProducts[p.name].purchaseCount < p.purchaseCount) {
-      uniqueProducts[p.name] = p;
-    }
-  });
-
-  const productList = Object.values(uniqueProducts).sort((a, b) => a.name.localeCompare(b.name));
+  // Convert to array and apply price rounding
+  const productList = Object.values(productsByName).map(p => ({
+    ...p,
+    latestPrice: roundPriceUp(p.latestPrice)
+  })).sort((a, b) => a.name.localeCompare(b.name));
 
   // Show modal with autocomplete
   const modal = document.getElementById('product-modal');
@@ -6143,7 +6372,7 @@ function addManualItem() {
       <label style="display: block; margin-bottom: 5px; font-weight: bold;">Search Product</label>
       <input type="text" id="product-search" placeholder="Type to search..."
              style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;"
-             oninput="filterProductSuggestions()" onfocus="showProductSuggestions()">
+             oninput="filterProductSuggestions()">
 
       <div id="product-suggestions" style="display: none; max-height: 300px; overflow-y: auto; border: 2px solid #667eea; border-top: none; border-radius: 0 0 8px 8px; background: white; position: relative; z-index: 1000;">
         <!-- Suggestions will appear here -->
@@ -6196,48 +6425,52 @@ function addManualItem() {
   }, 100);
 }
 
-function showProductSuggestions() {
-  const suggestionsDiv = document.getElementById('product-suggestions');
-  suggestionsDiv.style.display = 'block';
-  filterProductSuggestions();
-}
-
+// v3.0: Filter products - only shows dropdown when typing
 function filterProductSuggestions() {
   const searchTerm = document.getElementById('product-search').value.toLowerCase();
   const suggestionsDiv = document.getElementById('product-suggestions');
   const products = window.addItemProductList || [];
 
+  // v3.0: Only show dropdown when user has typed something
+  if (!searchTerm || searchTerm.length === 0) {
+    suggestionsDiv.style.display = 'none';
+    return;
+  }
+
   const filtered = products.filter(p => p.name.toLowerCase().includes(searchTerm));
 
   if (filtered.length === 0) {
+    suggestionsDiv.style.display = 'block';
     suggestionsDiv.innerHTML = '<div style="padding: 15px; color: #999; text-align: center;">No matching products found</div>';
     return;
   }
 
+  suggestionsDiv.style.display = 'block';
   suggestionsDiv.innerHTML = filtered.slice(0, 20).map(p => `
     <div style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; hover:background: #f5f5f5;"
-         onmousedown="selectProduct('${p.name.replace(/'/g, "\\'")}', '${p.storeSection}', ${p.avgPrice})"
+         onmousedown="selectProduct('${p.name.replace(/'/g, "\\'")}', '${p.storeSection}', ${p.latestPrice})"
          onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
       <div style="font-weight: 500;">${p.name}</div>
       <div style="font-size: 11px; color: #666; margin-top: 3px;">
-        ${p.category || 'No category'} • ~${p.avgPrice.toFixed(2)} kr • Bought ${p.purchaseCount} times
+        ${p.category || 'No category'} • ~${p.latestPrice.toFixed(2)} kr • Bought ${p.purchaseCount} times
       </div>
     </div>
   `).join('');
 }
 
-function selectProduct(name, storeSection, avgPrice) {
+// v3.0: Select product with latest price (already rounded)
+function selectProduct(name, storeSection, latestPrice) {
   document.getElementById('product-search').value = name;
   document.getElementById('new-item-name').value = '';
   document.getElementById('item-category').value = storeSection || 'skafferi';
-  document.getElementById('item-price').value = avgPrice.toFixed(2);
+  document.getElementById('item-price').value = latestPrice.toFixed(2);
   document.getElementById('product-suggestions').style.display = 'none';
 
   const infoDiv = document.getElementById('selected-product-info');
   infoDiv.style.display = 'block';
   infoDiv.innerHTML = `
     <div style="font-size: 14px; color: #0c63e4;">
-      ✓ Selected: <strong>${name}</strong> (~${avgPrice.toFixed(2)} kr)
+      ✓ Selected: <strong>${name}</strong> (~${latestPrice.toFixed(2)} kr)
     </div>
   `;
 }
@@ -6287,7 +6520,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v2.04
+  v3.0
 </footer>
 
 </body>
