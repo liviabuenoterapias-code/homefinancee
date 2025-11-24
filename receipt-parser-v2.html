@@ -5806,15 +5806,19 @@ function renderShoppingList() {
           ${items.map((item, index) => {
             const quantity = item.quantity || 1;
             const totalPrice = (item.estimatedPrice || 0) * quantity;
-            const isFirst = index === 0;
-            const isLast = index === items.length - 1;
             return `
-            <div style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              <div style="display: flex; flex-direction: column; gap: 2px; margin-right: 8px;">
-                <button onclick="moveItemUp('${item.id}')" ${isFirst ? 'disabled' : ''} style="background: ${isFirst ? '#e0e0e0' : '#667eea'}; color: white; border: none; padding: 2px 6px; cursor: ${isFirst ? 'not-allowed' : 'pointer'}; border-radius: 3px; font-size: 10px;" title="Move up">▲</button>
-                <button onclick="moveItemDown('${item.id}')" ${isLast ? 'disabled' : ''} style="background: ${isLast ? '#e0e0e0' : '#667eea'}; color: white; border: none; padding: 2px 6px; cursor: ${isLast ? 'not-allowed' : 'pointer'}; border-radius: 3px; font-size: 10px;" title="Move down">▼</button>
-              </div>
-              <input type="checkbox" onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;">
+            <div
+              draggable="true"
+              data-item-id="${item.id}"
+              data-category="${item.category}"
+              ondragstart="handleDragStart(event)"
+              ondragover="handleDragOver(event)"
+              ondragleave="handleDragLeave(event)"
+              ondrop="handleDrop(event)"
+              ondragend="handleDragEnd(event)"
+              style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; cursor: move; transition: all 0.2s;">
+              <div style="margin-right: 8px; color: #999; font-size: 16px; cursor: grab; user-select: none;" title="Drag to reorder">☰</div>
+              <input type="checkbox" onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;" onclick="event.stopPropagation();">
               <div style="flex: 1;">
                 <div style="font-weight: 500;">${item.name}</div>
                 ${item.estimatedPrice ? `
@@ -5824,7 +5828,7 @@ function renderShoppingList() {
                   </div>
                 ` : ''}
               </div>
-              <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;" onclick="event.stopPropagation();">
                 <div style="display: flex; align-items: center; gap: 4px; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 2px;">
                   <button onclick="updateQuantity('${item.id}', -1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">−</button>
                   <span style="min-width: 20px; text-align: center; font-weight: 500;">${quantity}</span>
@@ -5882,52 +5886,76 @@ function deleteItem(itemId) {
   renderShoppingList();
 }
 
-// v3.0: Move item up within its category
-function moveItemUp(itemId) {
+// v3.0: Drag and drop functionality for reordering items
+let draggedItemId = null;
+
+function handleDragStart(event) {
+  draggedItemId = event.currentTarget.dataset.itemId;
+  event.currentTarget.style.opacity = '0.5';
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+
+  const targetElement = event.currentTarget;
+  const draggedCategory = document.querySelector(`[data-item-id="${draggedItemId}"]`)?.dataset.category;
+  const targetCategory = targetElement.dataset.category;
+
+  // Only allow drop within same category
+  if (draggedCategory === targetCategory && targetElement.dataset.itemId !== draggedItemId) {
+    targetElement.style.borderTop = '3px solid #667eea';
+  }
+}
+
+function handleDragLeave(event) {
+  event.currentTarget.style.borderTop = '';
+}
+
+function handleDrop(event) {
+  event.preventDefault();
+  event.currentTarget.style.borderTop = '';
+
+  const targetItemId = event.currentTarget.dataset.itemId;
+  if (draggedItemId === targetItemId) return;
+
   const list = loadShoppingList();
-  const item = list.find(i => i.id === itemId);
-  if (!item) return;
+  const draggedItem = list.find(i => i.id === draggedItemId);
+  const targetItem = list.find(i => i.id === targetItemId);
+
+  if (!draggedItem || !targetItem) return;
+
+  // Only allow reordering within same category
+  if (draggedItem.category !== targetItem.category) return;
 
   // Get all unchecked items in the same category, sorted by sortOrder
   const categoryItems = list
-    .filter(i => !i.checked && i.category === item.category)
+    .filter(i => !i.checked && i.category === draggedItem.category)
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
-  const currentIndex = categoryItems.findIndex(i => i.id === itemId);
-  if (currentIndex <= 0) return; // Already at top
+  const draggedIndex = categoryItems.findIndex(i => i.id === draggedItemId);
+  const targetIndex = categoryItems.findIndex(i => i.id === targetItemId);
 
-  // Swap sortOrder with previous item
-  const prevItem = categoryItems[currentIndex - 1];
-  const tempOrder = item.sortOrder || 0;
-  item.sortOrder = prevItem.sortOrder || 0;
-  prevItem.sortOrder = tempOrder;
+  if (draggedIndex < 0 || targetIndex < 0) return;
+
+  // Remove dragged item and insert at target position
+  categoryItems.splice(draggedIndex, 1);
+  categoryItems.splice(targetIndex, 0, draggedItem);
+
+  // Reassign sortOrder to all items in category
+  categoryItems.forEach((item, index) => {
+    item.sortOrder = index;
+  });
 
   saveShoppingList(list);
   renderShoppingList();
 }
 
-// v3.0: Move item down within its category
-function moveItemDown(itemId) {
-  const list = loadShoppingList();
-  const item = list.find(i => i.id === itemId);
-  if (!item) return;
-
-  // Get all unchecked items in the same category, sorted by sortOrder
-  const categoryItems = list
-    .filter(i => !i.checked && i.category === item.category)
-    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-
-  const currentIndex = categoryItems.findIndex(i => i.id === itemId);
-  if (currentIndex < 0 || currentIndex >= categoryItems.length - 1) return; // Already at bottom
-
-  // Swap sortOrder with next item
-  const nextItem = categoryItems[currentIndex + 1];
-  const tempOrder = item.sortOrder || 0;
-  item.sortOrder = nextItem.sortOrder || 0;
-  nextItem.sortOrder = tempOrder;
-
-  saveShoppingList(list);
-  renderShoppingList();
+function handleDragEnd(event) {
+  event.currentTarget.style.opacity = '';
+  event.currentTarget.style.borderTop = '';
+  draggedItemId = null;
 }
 
 // v3.0: Render dismissed suggestions list
