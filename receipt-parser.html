@@ -257,6 +257,9 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
       <button class="btn" onclick="addManualItem()" style="background: #28a745;">
         ➕ Add Item
       </button>
+      <button class="btn" onclick="exportForMobile()" style="background: #007bff;">
+        📱 Export for Mobile
+      </button>
     </div>
 
     <!-- Suggestions Section -->
@@ -5211,8 +5214,8 @@ const STORE_CATEGORIES = [
   { id: 'skafferi', name: 'Skafferi', icon: '🥫' },
   { id: 'snacks-godis', name: 'Snacks/Godis', icon: '🍫' },
   { id: 'halsa-skonhet', name: 'Hälsa & Skönhet', icon: '💄' },
-  { id: 'icke-mat', name: 'Icke-mat', icon: '📦' },
-  { id: 'stad', name: 'Städ', icon: '🧹' }
+  { id: 'stad', name: 'Städ', icon: '🧹' },
+  { id: 'icke-mat', name: 'Icke-mat', icon: '📦' }
 ];
 
 // Load shopping list from localStorage
@@ -5817,9 +5820,9 @@ function renderShoppingList() {
               ondrop="handleDrop(event)"
               ondragend="handleDragEnd(event)"
               style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; cursor: move; transition: all 0.2s;">
-              <div style="margin-right: 8px; color: #999; font-size: 16px; cursor: grab; user-select: none;" title="Drag to reorder">☰</div>
-              <input type="checkbox" onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;" onclick="event.stopPropagation();">
-              <div style="flex: 1;">
+              <div draggable="false" style="margin-right: 8px; color: #999; font-size: 16px; cursor: grab; user-select: none;" title="Drag to reorder">☰</div>
+              <input draggable="false" type="checkbox" onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;" onclick="event.stopPropagation();">
+              <div draggable="false" style="flex: 1;">
                 <div style="font-weight: 500;">${item.name}</div>
                 ${item.estimatedPrice ? `
                   <div style="font-size: 12px; color: #666; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
@@ -5828,13 +5831,13 @@ function renderShoppingList() {
                   </div>
                 ` : ''}
               </div>
-              <div style="display: flex; align-items: center; gap: 8px;" onclick="event.stopPropagation();">
+              <div draggable="false" style="display: flex; align-items: center; gap: 8px;" onclick="event.stopPropagation();">
                 <div style="display: flex; align-items: center; gap: 4px; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 2px;">
-                  <button onclick="updateQuantity('${item.id}', -1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">−</button>
+                  <button draggable="false" onclick="updateQuantity('${item.id}', -1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">−</button>
                   <span style="min-width: 20px; text-align: center; font-weight: 500;">${quantity}</span>
-                  <button onclick="updateQuantity('${item.id}', 1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">+</button>
+                  <button draggable="false" onclick="updateQuantity('${item.id}', 1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">+</button>
                 </div>
-                <button onclick="deleteItem('${item.id}')" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                <button draggable="false" onclick="deleteItem('${item.id}')" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
                   Delete
                 </button>
               </div>
@@ -6084,6 +6087,338 @@ function clearAllSuggestions() {
     showMessage(`${suggestedItems.length} suggested items cleared and suggestions regenerated`, 'success');
     console.log('✓ Suggestions cleared and regenerated');
   }, 100);
+}
+
+// Export shopping list for mobile
+function exportForMobile() {
+  const list = loadShoppingList();
+
+  if (!list || list.length === 0) {
+    showMessage('No items in shopping list to export', 'info');
+    return;
+  }
+
+  // Create the HTML content with embedded data
+  const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Shopping List</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  padding: 20px;
+  min-height: 100vh;
+}
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+}
+h1 {
+  color: #764ba2;
+  text-align: center;
+  margin-bottom: 10px;
+  font-size: 24px;
+}
+.header-info {
+  text-align: center;
+  color: #666;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+.stats {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  padding: 15px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-around;
+  text-align: center;
+}
+.stat-item {
+  flex: 1;
+}
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+}
+.stat-label {
+  font-size: 12px;
+  opacity: 0.9;
+  margin-top: 5px;
+}
+.category-section {
+  margin-bottom: 25px;
+}
+.category-header {
+  background: #f5f5f5;
+  padding: 12px 15px;
+  border-radius: 8px;
+  font-weight: bold;
+  color: #764ba2;
+  margin-bottom: 10px;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.item {
+  background: #f9f9f9;
+  padding: 15px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  border-left: 4px solid #667eea;
+}
+.item.checked {
+  opacity: 0.5;
+  background: #e8e8e8;
+  border-left-color: #28a745;
+}
+.item-checkbox {
+  width: 24px;
+  height: 24px;
+  margin-right: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.item-details {
+  flex: 1;
+}
+.item-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 4px;
+}
+.item.checked .item-name {
+  text-decoration: line-through;
+  color: #999;
+}
+.item-info {
+  font-size: 13px;
+  color: #666;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.item-price {
+  font-weight: 600;
+  color: #764ba2;
+}
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+.empty-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+}
+.btn-clear {
+  width: 100%;
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 15px;
+}
+.btn-clear:active {
+  opacity: 0.8;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛒 My Shopping List</h1>
+  <div class="header-info">
+    <div id="date-info"></div>
+  </div>
+
+  <div id="stats" class="stats">
+    <div class="stat-item">
+      <div class="stat-value" id="total-items">0</div>
+      <div class="stat-label">Total Items</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value" id="checked-items">0</div>
+      <div class="stat-label">Checked Off</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value" id="total-price">0 kr</div>
+      <div class="stat-label">Estimated</div>
+    </div>
+  </div>
+
+  <div id="list-container"></div>
+
+  <div id="empty-state" class="empty-state" style="display: none;">
+    <div class="empty-icon">🛒</div>
+    <h3>All items checked off!</h3>
+    <p style="margin-top: 10px;">Great job shopping!</p>
+  </div>
+
+  <button class="btn-clear" id="clear-checked">Clear Checked Items</button>
+</div>
+
+<script>
+// Embedded shopping list data
+const SHOPPING_DATA = ${JSON.stringify(list)};
+
+// Store categories
+const STORE_CATEGORIES = {
+  'dryck': { name: 'Dryck', icon: '🥤' },
+  'frukt-gront': { name: 'Frukt & Grönt', icon: '🍎' },
+  'brod': { name: 'Bröd', icon: '🍞' },
+  'kylskap': { name: 'Kylskåp', icon: '🥛' },
+  'fryst': { name: 'Fryst', icon: '❄️' },
+  'kryddor': { name: 'Kryddor', icon: '🌶️' },
+  'skafferi': { name: 'Skafferi', icon: '🥫' },
+  'snacks-godis': { name: 'Snacks/Godis', icon: '🍫' },
+  'halsa-skonhet': { name: 'Hälsa & Skönhet', icon: '💄' },
+  'icke-mat': { name: 'Icke-mat', icon: '📦' },
+  'stad': { name: 'Städ', icon: '🧹' }
+};
+
+// Category order for walking through the store
+const CATEGORY_ORDER = ['dryck', 'frukt-gront', 'brod', 'kylskap', 'fryst', 'kryddor', 'skafferi', 'snacks-godis', 'halsa-skonhet', 'stad', 'icke-mat'];
+
+let shoppingList = [...SHOPPING_DATA];
+
+function toggleItem(itemId) {
+  const item = shoppingList.find(i => i.id === itemId);
+  if (item) {
+    item.checked = !item.checked;
+    renderList();
+  }
+}
+
+function clearChecked() {
+  const remaining = shoppingList.filter(item => !item.checked);
+  if (confirm(\`Remove \${shoppingList.length - remaining.length} checked items?\`)) {
+    shoppingList = remaining;
+    renderList();
+  }
+}
+
+function renderList() {
+  // Show date
+  document.getElementById('date-info').textContent = new Date().toLocaleDateString('sv-SE', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  if (shoppingList.length === 0) {
+    document.getElementById('empty-state').style.display = 'block';
+    document.getElementById('list-container').innerHTML = '';
+    document.getElementById('stats').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('empty-state').style.display = 'none';
+
+  // Show stats
+  const uncheckedItems = shoppingList.filter(item => !item.checked);
+  const checkedCount = shoppingList.filter(item => item.checked).length;
+  const totalPrice = uncheckedItems.reduce((sum, item) => sum + (item.estimatedPrice || 0) * (item.quantity || 1), 0);
+
+  document.getElementById('total-items').textContent = shoppingList.length;
+  document.getElementById('checked-items').textContent = checkedCount;
+  document.getElementById('total-price').textContent = Math.round(totalPrice) + ' kr';
+
+  // Group items by category
+  const grouped = {};
+  shoppingList.forEach(item => {
+    const cat = item.category || 'skafferi';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(item);
+  });
+
+  // Render by category order
+  let html = '';
+  CATEGORY_ORDER.forEach(catId => {
+    const items = grouped[catId];
+    if (!items || items.length === 0) return;
+
+    const catInfo = STORE_CATEGORIES[catId] || { name: catId, icon: '📦' };
+    const uncheckedInCat = items.filter(i => !i.checked).length;
+
+    if (uncheckedInCat === 0) return; // Hide categories with all checked items
+
+    html += \`
+      <div class="category-section">
+        <div class="category-header">
+          <span>\${catInfo.icon}</span>
+          <span>\${catInfo.name}</span>
+          <span style="margin-left: auto; font-size: 12px; opacity: 0.8;">\${uncheckedInCat} \${uncheckedInCat === 1 ? 'item' : 'items'}</span>
+        </div>
+    \`;
+
+    items.forEach(item => {
+      if (item.checked) return; // Hide checked items
+
+      const quantity = item.quantity > 1 ? \`\${item.quantity}x\` : '';
+      const price = item.estimatedPrice ? \`\${Math.round(item.estimatedPrice * item.quantity)} kr\` : '';
+
+      html += \`
+        <div class="item \${item.checked ? 'checked' : ''}" onclick="toggleItem('\${item.id}')">
+          <input type="checkbox" class="item-checkbox" \${item.checked ? 'checked' : ''} onclick="event.stopPropagation(); toggleItem('\${item.id}')">
+          <div class="item-details">
+            <div class="item-name">\${item.name}</div>
+            <div class="item-info">
+              \${quantity ? \`<span>📦 \${quantity}</span>\` : ''}
+              \${price ? \`<span class="item-price">\${price}</span>\` : ''}
+            </div>
+          </div>
+        </div>
+      \`;
+    });
+
+    html += '</div>';
+  });
+
+  document.getElementById('list-container').innerHTML = html;
+}
+
+// Initialize
+renderList();
+
+// Set up clear button
+document.getElementById('clear-checked').addEventListener('click', clearChecked);
+</script>
+</body>
+</html>`;
+
+  // Create a blob and download
+  const blob = new Blob([htmlContent], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  a.download = \`shopping-list-\${dateStr}.html\`;
+
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showMessage('Shopping list exported! Transfer the file to your phone.', 'success');
 }
 
 // Draft management functions
