@@ -2215,6 +2215,9 @@ function updateProductCategory(productName, newCategory) {
   saveCustomMappings(customMappings);
   console.log('✓ Category update complete');
 
+  // Reanalyze all receipts to reflect changes in all tabs
+  refreshAnalysis();
+
   // Preserve navigation context before closing
   const savedContext = modalNavigationContext;
   closeModal();
@@ -3149,6 +3152,9 @@ function updateProductMapping(element) {
   }
 
   console.log('Refreshing Product Library...');
+
+  // Reanalyze all receipts to reflect changes in all tabs
+  refreshAnalysis();
 
   // Save scroll position before re-rendering
   const scrollContainer = document.getElementById('product-library-scroll-container');
@@ -6677,7 +6683,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.0
+  v3.01
 </footer>
 
 </body>
