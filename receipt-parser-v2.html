@@ -786,15 +786,38 @@ function displayAllReceipts() {
           </tr>
         </thead>
         <tbody>
-          ${receipt.items.map((item, itemIndex) => `
+          ${receipt.items.map((item, itemIndex) => {
+            // Get the mapped product name
+            const customMappings = loadCustomMappings();
+            const customData = customMappings[item.name];
+            let productName;
+            if (customData?.productName) {
+              productName = customData.productName;
+            } else if (customData?.shoppingListName) {
+              productName = customData.shoppingListName;
+            } else {
+              const brand = customData?.brand || extractBrand(item.name);
+              const cleaned = cleanProductName(item.name, brand);
+              productName = suggestShoppingListName(cleaned);
+            }
+            const standardName = window.ProductCategories.standardizeProduct(item.name);
+
+            return `
             <tr>
-              <td><input type="text" value="${item.name}" onchange="updateItemName(${index}, ${itemIndex}, this.value)"></td>
+              <td>
+                <input type="text" value="${item.name}" onchange="updateItemName(${index}, ${itemIndex}, this.value)" style="width: 100%; margin-bottom: 4px;">
+                <div style="font-size: 11px; color: #666; display: flex; gap: 8px; flex-wrap: wrap;">
+                  <span title="Product name from auto-suggestion">📝 ${productName}</span>
+                  ${standardName !== item.name && standardName !== productName ? `<span title="Standardized name from PRODUCT_MAPPING">🔗 ${standardName}</span>` : ''}
+                </div>
+              </td>
               <td style="text-align: center;">${item.quantity}</td>
               <td style="text-align: right;">${item.unitPrice.toFixed(2)}</td>
               <td style="text-align: right;">${item.totalPrice.toFixed(2)}</td>
               <td style="text-align: right;">${item.discount > 0 ? '-' + item.discount.toFixed(2) : '0.00'}</td>
             </tr>
-          `).join('')}
+            `;
+          }).join('')}
         </tbody>
       </table>
 
@@ -2616,51 +2639,55 @@ function suggestShoppingListName(productName) {
   // Common patterns to extract generic names
   const patterns = [
     // Coffee
-    { regex: /KAFFE|COFFEE|ESPRESSO|BRYGG/i, name: 'Kaffe' },
+    { regex: /KAFFE|COFFEE|ESPRESSO|BRYGG/i, name: 'kaffe' },
     // Milk
-    { regex: /MJÖLK|MILK|FILMJÖLK|LÄTTMJÖLK|MELLANMJÖLK|MINIMJÖLK/i, name: 'Mjölk' },
+    { regex: /MJÖLK|MILK|FILMJÖLK|LÄTTMJÖLK|MELLANMJÖLK|MINIMJÖLK/i, name: 'mjölk' },
     // Bread
-    { regex: /BRÖD|BREAD|LIMPA|FRALLOR|FRALLA|LEVAIN/i, name: 'Bröd' },
+    { regex: /BRÖD|BREAD|LIMPA|FRALLOR|FRALLA|LEVAIN/i, name: 'bröd' },
     // Cheese
-    { regex: /OST|CHEESE|HUSHÅLLSOST|PRÄSTOST|VÄSTERBOTTEN/i, name: 'Ost' },
+    { regex: /OST|CHEESE|HUSHÅLLSOST|PRÄSTOST|VÄSTERBOTTEN/i, name: 'ost' },
     // Butter
-    { regex: /SMÖR|BUTTER|BREGOTT/i, name: 'Smör' },
+    { regex: /SMÖR|BUTTER|BREGOTT/i, name: 'smör' },
     // Eggs
-    { regex: /ÄGG|EGG/i, name: 'Ägg' },
+    { regex: /ÄGG|EGG/i, name: 'ägg' },
     // Yogurt
-    { regex: /YOGHURT|YOGURT|TURKISK|GREKISK/i, name: 'Yoghurt' },
+    { regex: /YOGHURT|YOGURT|TURKISK|GREKISK/i, name: 'yoghurt' },
     // Juice
-    { regex: /JUICE|SAF/i, name: 'Juice' },
+    { regex: /JUICE|SAF/i, name: 'juice' },
+    // Mustard
+    { regex: /SENAP|MUSTARD|DIJON/i, name: 'senap' },
+    // Fabric softener
+    { regex: /SKÖLJM|SKÖLJMEDEL|SOFTENER/i, name: 'sköljmedel' },
     // Tomatoes
-    { regex: /TOMAT|TOMATO/i, name: 'Tomat' },
+    { regex: /TOMAT|TOMATO/i, name: 'tomat' },
     // Cucumber
-    { regex: /GURKA|CUCUMBER/i, name: 'Gurka' },
+    { regex: /GURKA|CUCUMBER/i, name: 'gurka' },
     // Bananas
-    { regex: /BANAN|BANANA/i, name: 'Bananer' },
+    { regex: /BANAN|BANANA/i, name: 'bananer' },
     // Apples
-    { regex: /ÄPPL|APPLE/i, name: 'Äpple' },
+    { regex: /ÄPPL|APPLE/i, name: 'äpple' },
     // Onion
-    { regex: /LÖK|ONION|GULLÖK|RÖDLÖK/i, name: 'Lök' },
+    { regex: /LÖK|ONION|GULLÖK|RÖDLÖK/i, name: 'lök' },
     // Potatoes
-    { regex: /POTATIS|POTATO|POTAT/i, name: 'Potatis' },
+    { regex: /POTATIS|POTATO|POTAT/i, name: 'potatis' },
     // Pasta
-    { regex: /PASTA|MAKARONER|SPAGHETTI|PENNE/i, name: 'Pasta' },
+    { regex: /PASTA|MAKARONER|SPAGHETTI|PENNE/i, name: 'pasta' },
     // Rice
-    { regex: /RIS|RICE|JASMIN/i, name: 'Ris' },
+    { regex: /RIS|RICE|JASMIN/i, name: 'ris' },
     // Chicken
-    { regex: /KYCKLING|CHICKEN/i, name: 'Kyckling' },
+    { regex: /KYCKLING|CHICKEN/i, name: 'kyckling' },
     // Meat
-    { regex: /KÖTTFÄRS|FÄRS|GROUND/i, name: 'Köttfärs' },
+    { regex: /KÖTTFÄRS|FÄRS|GROUND/i, name: 'köttfärs' },
     // Ham
-    { regex: /SKINKA|HAM/i, name: 'Skinka' },
+    { regex: /SKINKA|HAM/i, name: 'skinka' },
     // Sausage
-    { regex: /KORV|SAUSAGE|FALUKORV/i, name: 'Korv' },
+    { regex: /KORV|SAUSAGE|FALUKORV/i, name: 'korv' },
     // Fish
-    { regex: /FISK|FISH|LAX|SALMON/i, name: 'Fisk' },
+    { regex: /FISK|FISH|LAX|SALMON/i, name: 'fisk' },
     // Paper
-    { regex: /PAPPER|PAPER|HUSHÅLLSPAPPER/i, name: 'Papper' },
+    { regex: /PAPPER|PAPER|HUSHÅLLSPAPPER/i, name: 'papper' },
     // Toilet paper
-    { regex: /TOALETTPAPPER|TOILET/i, name: 'Toalettpapper' }
+    { regex: /TOALETTPAPPER|TOILET/i, name: 'toalettpapper' }
   ];
 
   // Try to match against known patterns
@@ -2670,15 +2697,15 @@ function suggestShoppingListName(productName) {
     }
   }
 
-  // If no pattern matches, extract first word and capitalize it properly
+  // If no pattern matches, extract first word and make it lowercase
   const words = name.split(/\s+/);
   if (words.length > 0) {
     const firstWord = words[0];
-    // Capitalize first letter, lowercase the rest
-    return firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
+    // All lowercase
+    return firstWord.toLowerCase();
   }
 
-  return productName;
+  return productName.toLowerCase();
 }
 
 function buildProductLibrary() {

@@ -2,7 +2,7 @@
 
 A web-based PDF receipt parser specifically designed for Willys grocery store receipts (Swedish format).
 
-**Current Version:** v3.0 (2025-01-24)
+**Current Version:** v3.01 (2025-01-29)
 
 ## 📚 Documentation
 

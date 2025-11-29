@@ -1,5 +1,43 @@
 # Receipt Parser - Changelog
 
+## v3.01 - 2025-01-29
+
+### Product Name Mapping Improvements
+
+**Feature:** Enhanced product name standardization and visibility
+
+#### Changes Made:
+
+1. **Updated Product Mappings** (`product-categories.js`)
+   - Fixed `CLASSICO` → now correctly maps to "Pastasås"
+   - Added `DIJONSENAP LJUS 215G` → "Dijonsenap"
+   - Added `ESPRESSO KAFFEBÖNOR` → "Espresso kaffebönor"
+   - Added `SKÖLJM WHITE PURE` → "Sköljmedel White Pure"
+
+2. **Product Name Auto-Suggestion Patterns** (`receipt-parser-v2.html`)
+   - Added pattern for mustard: `SENAP|MUSTARD|DIJON` → "senap"
+   - Added pattern for fabric softener: `SKÖLJM|SKÖLJMEDEL|SOFTENER` → "sköljmedel"
+   - Changed all auto-generated product names to lowercase (was capitalized)
+   - Updated fallback logic to use lowercase instead of capitalized names
+
+3. **Receipt Parser Display Enhancement** (`receipt-parser-v2.html:780-822`)
+   - Added product name mapping display below each receipt item
+   - Shows 📝 icon with auto-generated product name
+   - Shows 🔗 icon with standardized name (if different from product name)
+   - Helps identify mapping issues and verify product normalization
+
+**Benefits:**
+- Easier to spot incorrect product mappings when parsing receipts
+- All product names now consistently lowercase
+- Better visibility into the product normalization process
+- Reduced confusion from inconsistent capitalization
+
+**Location:**
+- `product-categories.js:145-152, 174-192`
+- `receipt-parser-v2.html:2617-2685, 789-820`
+
+---
+
 ## v3.0 - 2025-01-24
 
 ### Major Rebuild - Smart Shopping List Redesign

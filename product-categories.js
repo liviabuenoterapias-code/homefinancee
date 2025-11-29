@@ -146,9 +146,10 @@ const PRODUCT_MAPPING = {
   'REAL MAYONNAIS250ML': 'Real Majonnäs',
   'GARLIC SAUCE 400G': 'Vitlökssås',
   'PASTASÅS 400G': 'Pastasås',
-  'CLASSICO': 'Classico',
+  'CLASSICO': 'Pastasås',
   'MARMELAD 4 FRUKT284G': 'Marmelad 4 Frukter',
   'LIME PRESSAD 200ML': 'Limejuice Pressad',
+  'DIJONSENAP LJUS 215G': 'Dijonsenap',
 
   // Färdigmat (Prepared Foods)
   'POTATIS SALLAD 200G': 'Potatissallad',
@@ -176,6 +177,7 @@ const PRODUCT_MAPPING = {
   'BAKPAPPER 33X42CM': 'Bakpapper',
   'SAFELOC 1 L': 'Safeloc',
   'GRAN CREMA HB 1KG': 'Gran Crema Kaffe',
+  'ESPRESSO KAFFEBÖNOR': 'Espresso kaffebönor',
   'CREAM LEMON': 'Cream Lemon',
 
   // Hushåll (Household)
@@ -187,6 +189,7 @@ const PRODUCT_MAPPING = {
   'NORMAL TROSSKYDD': 'Trosskydd',
   'VITT TOALETTPAPPER': 'Toalettpapper Vitt',
   'COLOR FLYTANDE TVÄTT': 'Tvättmedel Color',
+  'SKÖLJM WHITE PURE': 'Sköljmedel White Pure',
   'HANDDISKMEDEL': 'Handdiskmedel',
   'AVFALLSPÅSE': 'Avfallspåsar',
   'MATLÅDA GRÅ': 'Matlåda',
