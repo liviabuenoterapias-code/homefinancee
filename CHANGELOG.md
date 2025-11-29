@@ -6,6 +6,24 @@
 
 **Feature:** Enhanced product name standardization and visibility
 
+#### Bug Fix: Product Library Changes Now Update All Tabs
+
+**Issue:** Changes made in the Product Library tab were not reflected in other tabs (Analysis, Discounted Products, etc.) until the page was refreshed.
+
+**Fix:**
+- Added `refreshAnalysis()` call in `updateProductMapping()` - triggers reanalysis when Product Library is edited
+- Added `refreshAnalysis()` call in `updateProductCategory()` - updates all tabs when category changes from modal
+
+**Impact:** All product mapping changes (productName, productType, brand, storeSection) now immediately propagate to:
+- Analysis tab (categories, product names, price history)
+- Discounted Products view
+- Shopping List suggestions
+- All charts and statistics
+
+**Location:** `receipt-parser-v2.html:2219, 3157`
+
+---
+
 #### Changes Made:
 
 1. **Updated Product Mappings** (`product-categories.js`)
