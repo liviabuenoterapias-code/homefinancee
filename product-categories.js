@@ -457,7 +457,7 @@ function getCategory(standardizedName, rawName = null) {
   }
 
   // DISABLED: Old hardcoded category matching
-  // These are no longer used - products default to "Other"
+  // These are no longer used - products default to "övrigt"
   // Users should manually categorize products using their custom categories in Product Library
 
   // First try exact match from old CATEGORY_MAPPING (kept for backward compatibility)
@@ -465,8 +465,8 @@ function getCategory(standardizedName, rawName = null) {
   //   return CATEGORY_MAPPING[standardizedName];
   // }
 
-  // Return "Other" as default - users will manually categorize in Product Library
-  return 'Other';
+  // Return "övrigt" as default - users will manually categorize in Product Library
+  return 'övrigt';
 }
 
 // Export for use in HTML
