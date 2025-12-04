@@ -2979,9 +2979,7 @@ let productNamesCache = [];
 
 // Render product library table
 function renderProductLibrary(searchFilter = '') {
-  console.log('📚 Rendering Product Library...');
   const products = buildProductLibrary();
-  console.log('Built product library:', products.length, 'products');
 
   // Cache unique product names for autocomplete (performance optimization)
   productNamesCache = [...new Set(
@@ -3248,14 +3246,9 @@ function hideProductLibraryDropdown(rawName) {
 
 // Update product mapping
 function updateProductMapping(element) {
-  console.log('=== UPDATE PRODUCT MAPPING ===');
   const rawName = element.getAttribute('data-raw');
   const field = element.getAttribute('data-field');
   const value = element.value.trim();
-
-  console.log('Raw Name:', rawName);
-  console.log('Field:', field);
-  console.log('New Value:', value);
 
   if (!value && field !== 'brand') {
     alert('Value cannot be empty');
@@ -3264,7 +3257,6 @@ function updateProductMapping(element) {
   }
 
   const customMappings = loadCustomMappings();
-  console.log('Current custom mappings for this product:', customMappings[rawName]);
 
   if (!customMappings[rawName]) {
     // Initialize with new structure - get current UI values
@@ -3282,7 +3274,6 @@ function updateProductMapping(element) {
       productType: productType,
       storeSection: storeSectionSelect ? storeSectionSelect.value : mapProductTypeToStoreSection(productType)
     };
-    console.log('Initialized new mapping:', customMappings[rawName]);
   }
 
   // ALWAYS preserve the current storeSection from UI when changing ANY field
@@ -3292,14 +3283,11 @@ function updateProductMapping(element) {
   if (storeSectionSelect && field !== 'storeSection') {
     // Save current storeSection value before making any changes
     customMappings[rawName].storeSection = storeSectionSelect.value;
-    console.log('✓ Preserved current storeSection:', storeSectionSelect.value);
   }
 
   customMappings[rawName][field] = value;
-  console.log('Updated mapping:', customMappings[rawName]);
 
   saveCustomMappings(customMappings);
-  console.log('✓ Saved to localStorage');
 
   // If this is a productType field and it's a new category, add it to custom categories
   if (field === 'productType') {
@@ -3308,35 +3296,40 @@ function updateProductMapping(element) {
       const customCategories = loadCustomCategories();
       customCategories.push(value);
       saveCustomCategories(customCategories);
-      console.log('✓ Added new custom category:', value);
     }
   }
 
-  console.log('Refreshing Product Library...');
+  // PERFORMANCE OPTIMIZATION: Only refresh analysis if productType changed (affects categorization)
+  // For other fields (productName, brand, storeSection), just save without full refresh
+  const needsFullRefresh = field === 'productType';
 
-  // Reanalyze all receipts to reflect changes in all tabs
-  refreshAnalysis();
+  if (needsFullRefresh) {
+    // Reanalyze all receipts to reflect changes in all tabs
+    refreshAnalysis();
 
-  // Save scroll position before re-rendering
-  const scrollContainer = document.getElementById('product-library-scroll-container');
-  const scrollPosition = scrollContainer ? scrollContainer.scrollTop : 0;
-  console.log('📍 Saved scroll position:', scrollPosition);
+    // Save scroll position before re-rendering
+    const scrollContainer = document.getElementById('product-library-scroll-container');
+    const scrollPosition = scrollContainer ? scrollContainer.scrollTop : 0;
 
-  renderProductLibrary(document.getElementById('productSearch').value);
+    renderProductLibrary(document.getElementById('productSearch').value);
 
-  // Restore scroll position after re-rendering - use requestAnimationFrame for better timing
-  requestAnimationFrame(() => {
-    const scrollContainerAfter = document.getElementById('product-library-scroll-container');
-    if (scrollContainerAfter) {
-      scrollContainerAfter.scrollTop = scrollPosition;
-      console.log('📍 Restored scroll position to:', scrollPosition);
-      console.log('📍 Current scroll position after restore:', scrollContainerAfter.scrollTop);
-    } else {
-      console.error('❌ Scroll container not found after re-render');
+    // Restore scroll position after re-rendering
+    requestAnimationFrame(() => {
+      const scrollContainerAfter = document.getElementById('product-library-scroll-container');
+      if (scrollContainerAfter) {
+        scrollContainerAfter.scrollTop = scrollPosition;
+      }
+    });
+  } else {
+    // Just update the visual indicator if needed
+    if (!element.nextElementSibling || !element.nextElementSibling.classList?.contains('edit-indicator')) {
+      const indicator = document.createElement('span');
+      indicator.className = 'edit-indicator';
+      indicator.style.cssText = 'position: relative; z-index: 1;';
+      indicator.textContent = '✓';
+      element.parentElement.insertBefore(indicator, element.nextSibling);
     }
-  });
-
-  console.log('=== UPDATE COMPLETE ===');
+  }
 }
 
 // Initialize on page load
@@ -6903,7 +6896,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.08
+  v3.09
 </footer>
 
 </body>
