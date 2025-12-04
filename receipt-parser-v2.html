@@ -3040,15 +3040,26 @@ function renderProductLibrary(searchFilter = '') {
                 <div style="font-size: 11px; color: #999; margin-top: 2px;">Last: ${p.lastSeen}</div>
               </td>
               <td>
-                <input
-                  type="text"
-                  value="${p.productName || ''}"
-                  data-raw="${p.rawName}"
-                  data-field="productName"
-                  onchange="updateProductMapping(this)"
-                  placeholder="Product..."
-                  style="font-weight: 500; color: #667eea;"
-                />
+                <div style="position: relative;">
+                  <input
+                    type="text"
+                    value="${p.productName || ''}"
+                    data-raw="${p.rawName}"
+                    data-field="productName"
+                    onchange="updateProductMapping(this)"
+                    oninput="filterProductLibraryNames(this)"
+                    onfocus="filterProductLibraryNames(this)"
+                    onblur="setTimeout(() => hideProductLibraryDropdown('${p.rawName.replace(/'/g, "\\'")}'), 200)"
+                    placeholder="Product..."
+                    id="product-name-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                    style="font-weight: 500; color: #667eea; width: 100%;"
+                    autocomplete="off"
+                  />
+                  <div id="suggestions-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                       class="product-name-suggestions"
+                       style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: white; border: 2px solid #667eea; border-top: none; border-radius: 0 0 4px 4px; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                  </div>
+                </div>
                 ${p.isCustom ? '<span class="edit-indicator">✓</span>' : ''}
               </td>
               <td>
@@ -3122,6 +3133,67 @@ function renderProductLibrary(searchFilter = '') {
       </table>
     </div>
   `;
+}
+
+// Product Library autocomplete functions
+function filterProductLibraryNames(inputElement) {
+  const rawName = inputElement.getAttribute('data-raw');
+  const inputValue = inputElement.value.toLowerCase().trim();
+  const sanitizedRaw = rawName.replace(/[^a-zA-Z0-9]/g, '');
+  const suggestionsDiv = document.getElementById(`suggestions-${sanitizedRaw}`);
+
+  if (!inputValue) {
+    suggestionsDiv.style.display = 'none';
+    return;
+  }
+
+  // Get all unique product names from the library
+  const productLibrary = buildProductLibrary();
+  const uniqueNames = [...new Set(
+    productLibrary
+      .map(p => p.productName)
+      .filter(name => name && name.toLowerCase().includes(inputValue))
+  )].sort();
+
+  if (uniqueNames.length === 0) {
+    suggestionsDiv.style.display = 'none';
+    return;
+  }
+
+  // Show suggestions dropdown
+  suggestionsDiv.style.display = 'block';
+  suggestionsDiv.innerHTML = uniqueNames.slice(0, 15).map(name => `
+    <div style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee;"
+         onmousedown="selectProductLibraryName('${rawName.replace(/'/g, "\\'")}', '${name.replace(/'/g, "\\'")}')"
+         onmouseover="this.style.background='#f0f0f0'"
+         onmouseout="this.style.background='white'">
+      ${name}
+    </div>
+  `).join('');
+}
+
+function selectProductLibraryName(rawName, selectedName) {
+  const sanitizedRaw = rawName.replace(/[^a-zA-Z0-9]/g, '');
+  const inputElement = document.getElementById(`product-name-${sanitizedRaw}`);
+  const suggestionsDiv = document.getElementById(`suggestions-${sanitizedRaw}`);
+
+  if (inputElement) {
+    inputElement.value = selectedName;
+    // Trigger the onchange event to save the mapping
+    inputElement.dispatchEvent(new Event('change'));
+  }
+
+  if (suggestionsDiv) {
+    suggestionsDiv.style.display = 'none';
+  }
+}
+
+function hideProductLibraryDropdown(rawName) {
+  const sanitizedRaw = rawName.replace(/[^a-zA-Z0-9]/g, '');
+  const suggestionsDiv = document.getElementById(`suggestions-${sanitizedRaw}`);
+  if (suggestionsDiv) {
+    suggestionsDiv.style.display = 'none';
+  }
 }
 
 // Update product mapping
@@ -6781,7 +6853,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.03
+  v3.04
 </footer>
 
 </body>
