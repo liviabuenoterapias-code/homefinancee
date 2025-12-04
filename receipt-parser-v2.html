@@ -3308,9 +3308,10 @@ function updateProductMapping(element) {
     }
   }
 
-  // PERFORMANCE OPTIMIZATION: Only refresh analysis if productType changed (affects categorization)
-  // For other fields (productName, brand, storeSection), just save without full refresh
-  const needsFullRefresh = field === 'productType';
+  // PERFORMANCE OPTIMIZATION: Refresh analysis when productType or productName changes
+  // These fields affect how items are grouped/displayed across all receipts and analysis
+  // Brand and storeSection changes don't need full refresh (only affect single product view)
+  const needsFullRefresh = field === 'productType' || field === 'productName';
 
   if (needsFullRefresh) {
     // Reanalyze all receipts to reflect changes in all tabs
@@ -6905,7 +6906,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.13
+  v3.14
 </footer>
 
 </body>
