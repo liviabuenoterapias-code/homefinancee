@@ -1279,22 +1279,37 @@ function renderTagFilter() {
 
 // Old dropdown functions removed - replaced with working dropdown below
 
-function renderTrends() {
-  // Get monthly spending data
-  const months = Object.keys(analysisInstance.processed.months).sort();
-  const monthlyData = months.map(month => {
-    const purchases = analysisInstance.processed.months[month];
+// Track current selected year for trends
+let currentTrendsYear = null;
+
+function renderTrends(selectedYear = null) {
+  // Get all available years from the data
+  const allMonths = Object.keys(analysisInstance.processed.months);
+  const availableYears = [...new Set(allMonths.map(m => parseInt(m.substring(0, 4))))].sort((a, b) => b - a);
+
+  // If no year selected, use the most recent year with data, or current year
+  if (!selectedYear) {
+    selectedYear = currentTrendsYear || availableYears[0] || new Date().getFullYear();
+  }
+  currentTrendsYear = selectedYear;
+
+  // Generate all 12 months for the selected year
+  const monthlyData = [];
+  for (let month = 1; month <= 12; month++) {
+    const monthKey = `${selectedYear}-${String(month).padStart(2, '0')}`;
+    const purchases = analysisInstance.processed.months[monthKey] || [];
     const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
     const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
     const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
-    return {
-      month,
+
+    monthlyData.push({
+      month: monthKey,
       totalSpent,
       totalSaved,
       itemCount,
-      uniqueProducts: new Set(purchases.map(p => p.standardName)).size
-    };
-  });
+      uniqueProducts: purchases.length > 0 ? new Set(purchases.map(p => p.standardName)).size : 0
+    });
+  }
 
   const html = `
     <div class="analysis-section">
@@ -1303,6 +1318,22 @@ function renderTrends() {
         <span style="font-size: 20px;">▼</span>
       </div>
       <div id="trends-content" class="section-content">
+
+        <!-- Year Navigation -->
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <button onclick="renderTrends(${selectedYear - 1})"
+                  style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+            ← ${selectedYear - 1}
+          </button>
+          <h3 style="margin: 0; font-size: 18px; color: #333;">
+            Year: ${selectedYear}
+          </h3>
+          <button onclick="renderTrends(${selectedYear + 1})"
+                  style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;"
+                  ${selectedYear >= new Date().getFullYear() ? 'disabled style="background: #ccc; cursor: not-allowed;"' : ''}>
+            ${selectedYear + 1} →
+          </button>
+        </div>
 
         <!-- Monthly Spending Chart -->
         <h3 style="margin-bottom: 15px;">Monthly Spending Overview</h3>
@@ -1345,10 +1376,18 @@ function renderTrends() {
   setTimeout(() => {
     const ctx = document.getElementById('monthlySpendingChart');
     if (ctx) {
-      new Chart(ctx, {
+      // Destroy existing chart if it exists to avoid duplication
+      if (window.monthlySpendingChartInstance) {
+        window.monthlySpendingChartInstance.destroy();
+      }
+
+      // Month names for labels
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      window.monthlySpendingChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: monthlyData.map(m => m.month),
+          labels: monthNames,
           datasets: [
             {
               label: 'Total Spent (kr)',
@@ -6742,7 +6781,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.02
+  v3.03
 </footer>
 
 </body>
