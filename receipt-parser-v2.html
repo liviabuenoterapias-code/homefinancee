@@ -434,6 +434,15 @@ function parseReceiptText(text, filename) {
     debugInfo: [] // For debugging
   };
 
+  // Decode HTML entities before processing
+  text = text.replace(/gt;/g, '>');
+  text = text.replace(/lt;/g, '<');
+  text = text.replace(/amp;/g, '&');
+  text = text.replace(/quot;/g, '"');
+  text = text.replace(/apos;/g, "'");
+  text = text.replace(/#37;/g, '%');
+  text = text.replace(/&#37;/g, '%');
+
   const lines = text.split('\n').map(l => l.trim());
 
   // Extract store - look for Willys store name (not discount lines)
@@ -6896,7 +6905,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.11
+  v3.12
 </footer>
 
 </body>
