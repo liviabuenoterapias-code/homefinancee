@@ -3027,6 +3027,15 @@ function renderProductLibrary(searchFilter = '') {
         • <span style="color: #28a745;"><strong>${Object.keys(customMappings).length}</strong> custom mappings</span>
       ` : ''}
     </div>
+
+    <!-- Shared datalists for all inputs (performance optimization) -->
+    <datalist id="shared-product-types">
+      ${categories.map(cat => `<option value="${cat}">`).join('')}
+    </datalist>
+    <datalist id="shared-tags-list">
+      ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+    </datalist>
+
     <div id="product-library-scroll-container" style="max-height: 70vh; overflow-y: auto;">
       <table class="product-table">
         <thead>
@@ -3087,7 +3096,7 @@ function renderProductLibrary(searchFilter = '') {
               <td>
                 <input
                   type="text"
-                  list="product-types-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  list="shared-product-types"
                   value="${p.productType || ''}"
                   data-raw="${p.rawName}"
                   data-field="productType"
@@ -3095,9 +3104,6 @@ function renderProductLibrary(searchFilter = '') {
                   placeholder="Type..."
                   style="font-size: 13px;"
                 />
-                <datalist id="product-types-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
-                  ${categories.map(cat => `<option value="${cat}">`).join('')}
-                </datalist>
               </td>
               <td>
                 <select
@@ -3124,15 +3130,12 @@ function renderProductLibrary(searchFilter = '') {
                 </div>
                 <input
                   type="text"
-                  list="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  list="shared-tags-list"
                   placeholder="Add tag..."
                   data-raw-product="${p.rawName.replace(/"/g, '&quot;')}"
                   onkeypress="if(event.key === 'Enter') { addProductTagFromLibrary(this); this.value = ''; }"
                   style="font-size: 12px; padding: 4px 6px;"
                 />
-                <datalist id="tags-list-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}">
-                  ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
-                </datalist>
               </td>
               <td>
                 <span class="product-count">${p.count}</span>
@@ -6861,7 +6864,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.05
+  v3.06
 </footer>
 
 </body>
