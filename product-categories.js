@@ -33,7 +33,13 @@ const ENCODING_FIXES = {
   'GR?D? BR?': 'GRÄDDE BRIE',
   'PUMPAK?RNOR': 'PUMPA KÄRNOR',
   'GR?SL?K': 'GRÄSLÖK',
-  'FETA 23?': 'FETA 23%'
+  'FETA 23?': 'FETA 23%',
+  'N?TF?RS': 'NÖTFÄRS',
+  'RICOT?': 'RICOTTA',
+  'TORTELLONI RICOT?': 'TORTELLONI RICOTTA',
+  'F?R': 'FÅR',
+  'K?TT': 'KÖTT',
+  'GR?DD': 'GRÄDDE'
 };
 
 // Product name standardization - maps variations to standard Swedish names
@@ -386,6 +392,12 @@ const CATEGORY_MAPPING = {
 // Function to fix encoding
 function fixEncoding(text) {
   let fixed = text;
+
+  // Fix HTML entity for percent sign: #37; or &#37; -> %
+  fixed = fixed.replace(/#37;/g, '%');
+  fixed = fixed.replace(/&#37;/g, '%');
+
+  // Apply character encoding fixes
   for (const [wrong, correct] of Object.entries(ENCODING_FIXES)) {
     // Escape special regex characters like ? * + . [ ] ( ) etc.
     const escaped = wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
