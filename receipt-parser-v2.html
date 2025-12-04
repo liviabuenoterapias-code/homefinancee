@@ -3078,7 +3078,7 @@ function renderProductLibrary(searchFilter = '') {
                 />
                 <div id="suggestions-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
                      class="product-name-suggestions"
-                     style="display: none; position: absolute; top: 100%; left: 0; min-width: 250px; max-height: 200px; overflow-y: auto; background: white; border: 2px solid #667eea; border-radius: 4px; z-index: 9999; box-shadow: 0 8px 16px rgba(0,0,0,0.2);">
+                     style="display: none; position: fixed; overflow-y: auto; background: white; border: 2px solid #667eea; border-radius: 4px; z-index: 9999; box-shadow: 0 8px 16px rgba(0,0,0,0.2);">
                 </div>
                 ${p.isCustom ? '<span class="edit-indicator" style="position: relative; z-index: 1;">✓</span>' : ''}
               </td>
@@ -3147,6 +3147,21 @@ function renderProductLibrary(searchFilter = '') {
       </table>
     </div>
   `;
+
+  // Add scroll listener to hide dropdowns when scrolling
+  setTimeout(() => {
+    const scrollContainer = document.getElementById('product-library-scroll-container');
+    if (scrollContainer) {
+      scrollContainer.addEventListener('scroll', () => {
+        // Hide all visible dropdowns
+        document.querySelectorAll('.product-name-suggestions').forEach(dropdown => {
+          if (dropdown.style.display === 'block') {
+            dropdown.style.display = 'none';
+          }
+        });
+      });
+    }
+  }, 100);
 }
 
 // Product Library autocomplete functions
@@ -3169,6 +3184,30 @@ function filterProductLibraryNames(inputElement) {
   if (matchingNames.length === 0) {
     suggestionsDiv.style.display = 'none';
     return;
+  }
+
+  // Position dropdown using fixed positioning to avoid clipping
+  const rect = inputElement.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const dropdownMaxHeight = 200;
+  const spaceBelow = viewportHeight - rect.bottom;
+  const spaceAbove = rect.top;
+
+  // Decide whether to show dropdown above or below the input
+  const showAbove = spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
+
+  suggestionsDiv.style.position = 'fixed';
+  suggestionsDiv.style.left = rect.left + 'px';
+  suggestionsDiv.style.width = Math.max(rect.width, 250) + 'px';
+
+  if (showAbove) {
+    suggestionsDiv.style.bottom = (viewportHeight - rect.top) + 'px';
+    suggestionsDiv.style.top = 'auto';
+    suggestionsDiv.style.maxHeight = Math.min(spaceAbove - 10, dropdownMaxHeight) + 'px';
+  } else {
+    suggestionsDiv.style.top = rect.bottom + 'px';
+    suggestionsDiv.style.bottom = 'auto';
+    suggestionsDiv.style.maxHeight = Math.min(spaceBelow - 10, dropdownMaxHeight) + 'px';
   }
 
   // Show suggestions dropdown
@@ -6864,7 +6903,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.07
+  v3.08
 </footer>
 
 </body>
