@@ -72,8 +72,10 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
 .close-modal { float: right; font-size: 28px; cursor: pointer; color: #999; }
 .close-modal:hover { color: #333; }
 .product-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-.product-table th { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 15px; text-align: left; font-weight: 600; position: sticky; top: 0; }
-.product-table td { padding: 12px; border-bottom: 1px solid #eee; }
+.product-table th { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 15px; text-align: left; font-weight: 600; position: sticky; top: 0; z-index: 10; }
+.product-table td { padding: 12px; border-bottom: 1px solid #eee; overflow: visible; }
+.product-table tbody { overflow: visible; }
+.product-table tr { overflow: visible; }
 .product-table tr:hover { background: #f9f9f9; }
 .product-table input, .product-table select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
 .product-table input:focus, .product-table select:focus { border-color: #667eea; outline: none; }
@@ -3054,33 +3056,31 @@ function renderProductLibrary(searchFilter = '') {
             const productTags = getProductTagsByRawName(p.rawName);
             const storeSectionName = STORE_CATEGORIES.find(c => c.id === p.storeSection)?.name || p.storeSection;
             return `
-            <tr>
+            <tr style="position: relative;">
               <td>
                 <div style="font-family: monospace; color: #555; font-size: 12px;">${p.rawName}</div>
                 <div style="font-size: 11px; color: #999; margin-top: 2px;">Last: ${p.lastSeen}</div>
               </td>
-              <td>
-                <div style="position: relative;">
-                  <input
-                    type="text"
-                    value="${p.productName || ''}"
-                    data-raw="${p.rawName}"
-                    data-field="productName"
-                    onchange="updateProductMapping(this)"
-                    oninput="filterProductLibraryNames(this)"
-                    onfocus="filterProductLibraryNames(this)"
-                    onblur="setTimeout(() => hideProductLibraryDropdown('${p.rawName.replace(/'/g, "\\'")}'), 200)"
-                    placeholder="Product..."
-                    id="product-name-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
-                    style="font-weight: 500; color: #667eea; width: 100%;"
-                    autocomplete="off"
-                  />
-                  <div id="suggestions-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
-                       class="product-name-suggestions"
-                       style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: white; border: 2px solid #667eea; border-top: none; border-radius: 0 0 4px 4px; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                  </div>
+              <td style="position: relative; overflow: visible;">
+                <input
+                  type="text"
+                  value="${p.productName || ''}"
+                  data-raw="${p.rawName}"
+                  data-field="productName"
+                  onchange="updateProductMapping(this)"
+                  oninput="filterProductLibraryNames(this)"
+                  onfocus="filterProductLibraryNames(this)"
+                  onblur="setTimeout(() => hideProductLibraryDropdown('${p.rawName.replace(/'/g, "\\'")}'), 200)"
+                  placeholder="Product..."
+                  id="product-name-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  style="font-weight: 500; color: #667eea; width: 100%;"
+                  autocomplete="off"
+                />
+                <div id="suggestions-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                     class="product-name-suggestions"
+                     style="display: none; position: absolute; top: 100%; left: 0; min-width: 250px; max-height: 200px; overflow-y: auto; background: white; border: 2px solid #667eea; border-radius: 4px; z-index: 9999; box-shadow: 0 8px 16px rgba(0,0,0,0.2);">
                 </div>
-                ${p.isCustom ? '<span class="edit-indicator">✓</span>' : ''}
+                ${p.isCustom ? '<span class="edit-indicator" style="position: relative; z-index: 1;">✓</span>' : ''}
               </td>
               <td>
                 <input
@@ -6864,7 +6864,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.06
+  v3.07
 </footer>
 
 </body>
