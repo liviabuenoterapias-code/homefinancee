@@ -3552,6 +3552,11 @@ function filterProductLibraryNames(inputElement) {
     return;
   }
 
+  // Ensure product names cache is available (rebuild if needed)
+  if (productNamesCache.length === 0) {
+    rebuildProductLibraryCache();
+  }
+
   // Use cached product names for fast filtering
   const matchingNames = productNamesCache.filter(name =>
     name.toLowerCase().includes(inputValue)
@@ -7259,7 +7264,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.24
+  v3.25
 </footer>
 
 </body>
