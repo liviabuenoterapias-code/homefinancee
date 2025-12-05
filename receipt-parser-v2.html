@@ -1294,6 +1294,7 @@ function renderTagFilter() {
 
 // Track current selected year for trends
 let currentTrendsYear = null;
+let showYearComparison = false;
 
 function renderTrends(selectedYear = null) {
   // Get all available years from the data
@@ -1306,23 +1307,42 @@ function renderTrends(selectedYear = null) {
   }
   currentTrendsYear = selectedYear;
 
-  // Generate all 12 months for the selected year
-  const monthlyData = [];
-  for (let month = 1; month <= 12; month++) {
-    const monthKey = `${selectedYear}-${String(month).padStart(2, '0')}`;
-    const purchases = analysisInstance.processed.months[monthKey] || [];
-    const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
-    const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
-    const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
+  // Helper function to calculate monthly data for a given year
+  const getMonthlyData = (year) => {
+    const data = [];
+    for (let month = 1; month <= 12; month++) {
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const purchases = analysisInstance.processed.months[monthKey] || [];
+      const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
+      const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
+      const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
 
-    monthlyData.push({
-      month: monthKey,
-      totalSpent,
-      totalSaved,
-      itemCount,
-      uniqueProducts: purchases.length > 0 ? new Set(purchases.map(p => p.standardName)).size : 0
-    });
-  }
+      // Count number of shopping trips (receipts) for this month
+      const tripCount = allReceipts.filter(receipt => {
+        if (!receipt.date) return false;
+        return receipt.date.startsWith(monthKey);
+      }).length;
+
+      const avgPerTrip = tripCount > 0 ? totalSpent / tripCount : 0;
+
+      data.push({
+        month: monthKey,
+        totalSpent,
+        totalSaved,
+        itemCount,
+        uniqueProducts: purchases.length > 0 ? new Set(purchases.map(p => p.standardName)).size : 0,
+        tripCount,
+        avgPerTrip
+      });
+    }
+    return data;
+  };
+
+  // Generate data for current year
+  const monthlyData = getMonthlyData(selectedYear);
+
+  // Generate data for previous year if comparison is enabled
+  const previousYearData = showYearComparison ? getMonthlyData(selectedYear - 1) : null;
 
   const html = `
     <div class="analysis-section">
@@ -1338,9 +1358,17 @@ function renderTrends(selectedYear = null) {
                   style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
             ← ${selectedYear - 1}
           </button>
-          <h3 style="margin: 0; font-size: 18px; color: #333;">
-            Year: ${selectedYear}
-          </h3>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <h3 style="margin: 0; font-size: 18px; color: #333;">
+              Year: ${selectedYear}
+            </h3>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #666; cursor: pointer;">
+              <input type="checkbox" id="yearComparisonToggle" ${showYearComparison ? 'checked' : ''}
+                     onchange="showYearComparison = this.checked; renderTrends();"
+                     style="cursor: pointer;">
+              Compare with ${selectedYear - 1}
+            </label>
+          </div>
           <button onclick="renderTrends(${selectedYear + 1})"
                   style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;"
                   ${selectedYear >= new Date().getFullYear() ? 'disabled style="background: #ccc; cursor: not-allowed;"' : ''}>
@@ -1361,9 +1389,10 @@ function renderTrends(selectedYear = null) {
               <th>Month</th>
               <th>Total Spent</th>
               <th>Discounts</th>
+              <th>Trips</th>
+              <th>Avg per Trip</th>
               <th>Items Purchased</th>
               <th>Unique Products</th>
-              <th>Avg per Item</th>
             </tr>
           </thead>
           <tbody>
@@ -1372,9 +1401,10 @@ function renderTrends(selectedYear = null) {
                 <td><strong>${m.month}</strong></td>
                 <td>${m.totalSpent.toFixed(2)} kr</td>
                 <td style="color: #28a745;">-${m.totalSaved.toFixed(2)} kr</td>
+                <td>${m.tripCount}</td>
+                <td>${m.avgPerTrip.toFixed(2)} kr</td>
                 <td>${m.itemCount}</td>
                 <td>${m.uniqueProducts}</td>
-                <td>${(m.totalSpent / m.itemCount).toFixed(2)} kr</td>
               </tr>
             `).join('')}
           </tbody>
@@ -1397,28 +1427,63 @@ function renderTrends(selectedYear = null) {
       // Month names for labels
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+      // Build datasets array
+      const datasets = [
+        {
+          label: `${selectedYear} Total Spent`,
+          data: monthlyData.map(m => m.totalSpent),
+          borderColor: '#667eea',
+          backgroundColor: 'rgba(102, 126, 234, 0.1)',
+          tension: 0.4,
+          fill: true,
+          borderWidth: 2,
+          monthlyData: monthlyData // Store reference for tooltip
+        },
+        {
+          label: `${selectedYear} Discounts Saved`,
+          data: monthlyData.map(m => m.totalSaved),
+          borderColor: '#28a745',
+          backgroundColor: 'rgba(40, 167, 69, 0.1)',
+          tension: 0.4,
+          fill: true,
+          borderWidth: 2,
+          monthlyData: monthlyData // Store reference for tooltip
+        }
+      ];
+
+      // Add previous year datasets if comparison is enabled
+      if (showYearComparison && previousYearData) {
+        datasets.push(
+          {
+            label: `${selectedYear - 1} Total Spent`,
+            data: previousYearData.map(m => m.totalSpent),
+            borderColor: 'rgba(102, 126, 234, 0.5)',
+            backgroundColor: 'rgba(102, 126, 234, 0.05)',
+            tension: 0.4,
+            fill: false,
+            borderWidth: 2,
+            borderDash: [5, 5],
+            monthlyData: previousYearData // Store reference for tooltip
+          },
+          {
+            label: `${selectedYear - 1} Discounts Saved`,
+            data: previousYearData.map(m => m.totalSaved),
+            borderColor: 'rgba(40, 167, 69, 0.5)',
+            backgroundColor: 'rgba(40, 167, 69, 0.05)',
+            tension: 0.4,
+            fill: false,
+            borderWidth: 2,
+            borderDash: [5, 5],
+            monthlyData: previousYearData // Store reference for tooltip
+          }
+        );
+      }
+
       window.monthlySpendingChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
           labels: monthNames,
-          datasets: [
-            {
-              label: 'Total Spent (kr)',
-              data: monthlyData.map(m => m.totalSpent),
-              borderColor: '#667eea',
-              backgroundColor: 'rgba(102, 126, 234, 0.1)',
-              tension: 0.4,
-              fill: true
-            },
-            {
-              label: 'Discounts Saved (kr)',
-              data: monthlyData.map(m => m.totalSaved),
-              borderColor: '#28a745',
-              backgroundColor: 'rgba(40, 167, 69, 0.1)',
-              tension: 0.4,
-              fill: true
-            }
-          ]
+          datasets: datasets
         },
         options: {
           responsive: true,
@@ -1430,7 +1495,29 @@ function renderTrends(selectedYear = null) {
             tooltip: {
               callbacks: {
                 label: function(context) {
-                  return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr';
+                  const datasetMonthlyData = context.dataset.monthlyData;
+                  const monthIndex = context.dataIndex;
+                  const monthData = datasetMonthlyData[monthIndex];
+
+                  // Format the value with thousand separator
+                  const formatNumber = (num) => {
+                    return num.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  };
+
+                  // Build tooltip lines
+                  const lines = [
+                    context.dataset.label + ': ' + formatNumber(context.parsed.y) + ' kr'
+                  ];
+
+                  // Only add trip info for "Total Spent" datasets (not for "Discounts Saved")
+                  if (context.dataset.label.includes('Total Spent')) {
+                    lines.push('Number of trips: ' + monthData.tripCount);
+                    if (monthData.tripCount > 0) {
+                      lines.push('Average per trip: ' + formatNumber(monthData.avgPerTrip) + ' kr');
+                    }
+                  }
+
+                  return lines;
                 }
               }
             }
@@ -7147,7 +7234,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.15
+  v3.16
 </footer>
 
 </body>
