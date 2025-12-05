@@ -904,6 +904,7 @@ function clearAll() {
 
 function saveReceipts() {
   localStorage.setItem('groceryReceipts_v2', JSON.stringify(allReceipts));
+  invalidateProductLibraryCache(); // Clear cache when receipts change
 }
 
 function exportToCSV() {
@@ -2956,6 +2957,7 @@ function migrateOldDataStructure() {
 function saveCustomMappings(mappings) {
   console.log('💾 Saving custom mappings to localStorage...');
   localStorage.setItem('customProductMappings_v2', JSON.stringify(mappings));
+  invalidateProductLibraryCache(); // Clear cache when mappings change
   console.log('✓ Saved to localStorage');
 
   // Reload analysis to reflect changes
@@ -3340,17 +3342,35 @@ function deleteCustomCategory(categoryName) {
 
 // Cache for product names autocomplete (for performance)
 let productNamesCache = [];
+// Cache for built product library (performance optimization)
+let productLibraryCache = null;
+let productLibraryCacheTimestamp = 0;
 
-// Render product library table
-function renderProductLibrary(searchFilter = '') {
-  const products = buildProductLibrary();
+// Invalidate product library cache (call when receipts or mappings change)
+function invalidateProductLibraryCache() {
+  productLibraryCache = null;
+  productNamesCache = [];
+}
+
+// Rebuild product library cache
+function rebuildProductLibraryCache() {
+  productLibraryCache = buildProductLibrary();
+  productLibraryCacheTimestamp = Date.now();
 
   // Cache unique product names for autocomplete (performance optimization)
   productNamesCache = [...new Set(
-    products
+    productLibraryCache
       .map(p => p.productName)
       .filter(name => name && name.trim())
   )].sort();
+
+  return productLibraryCache;
+}
+
+// Render product library table
+function renderProductLibrary(searchFilter = '') {
+  // Use cached product library if available, otherwise build it
+  const products = productLibraryCache || rebuildProductLibraryCache();
 
   const filteredProducts = searchFilter
     ? products.filter(p => {
@@ -7261,7 +7281,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.19
+  v3.20
 </footer>
 
 </body>
