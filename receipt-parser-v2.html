@@ -998,6 +998,7 @@ function refreshAnalysis() {
     <div id="staples-section"></div>
     <div id="categories-section"></div>
     <div id="discounts-section"></div>
+    <div id="yoy-trips-section"></div>
   `;
 
   renderTrends();
@@ -1005,6 +1006,7 @@ function refreshAnalysis() {
   renderStaples();
   renderCategories();
   renderDiscounts();
+  renderYoYTrips();
 }
 
 // Get all unique tags from all products
@@ -1886,6 +1888,245 @@ function renderDiscounts() {
   `;
 
   document.getElementById('discounts-section').innerHTML = html;
+}
+
+// Global variable to track the current viewing period for YoY Trips chart
+let yoyTripsStartMonth = null;
+
+function renderYoYTrips() {
+  // Calculate trip data grouped by month
+  const tripsByMonth = {};
+
+  allReceipts.forEach(receipt => {
+    if (!receipt.date) return;
+
+    // Parse date (format: YYYY-MM-DD)
+    const dateParts = receipt.date.split('-');
+    if (dateParts.length < 2) return;
+
+    const year = parseInt(dateParts[0]);
+    const month = parseInt(dateParts[1]);
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+
+    if (!tripsByMonth[monthKey]) {
+      tripsByMonth[monthKey] = {
+        totalSpent: 0,
+        tripCount: 0,
+        year: year,
+        month: month
+      };
+    }
+
+    tripsByMonth[monthKey].totalSpent += receipt.totalAmount;
+    tripsByMonth[monthKey].tripCount += 1;
+  });
+
+  // Calculate average per trip for each month
+  Object.keys(tripsByMonth).forEach(key => {
+    const data = tripsByMonth[key];
+    data.avgPerTrip = data.tripCount > 0 ? data.totalSpent / data.tripCount : 0;
+  });
+
+  // Get all month keys sorted
+  const allMonthKeys = Object.keys(tripsByMonth).sort();
+
+  // If no start month set, default to most recent 12 months
+  if (!yoyTripsStartMonth && allMonthKeys.length > 0) {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1; // 0-indexed
+
+    // Calculate start month (12 months ago)
+    let startYear = currentYear;
+    let startMonth = currentMonth - 11;
+    if (startMonth <= 0) {
+      startMonth += 12;
+      startYear -= 1;
+    }
+
+    yoyTripsStartMonth = `${startYear}-${String(startMonth).padStart(2, '0')}`;
+  }
+
+  // Generate the 12 consecutive months for display
+  const displayMonths = [];
+  if (yoyTripsStartMonth) {
+    const [startYear, startMonth] = yoyTripsStartMonth.split('-').map(Number);
+
+    for (let i = 0; i < 12; i++) {
+      let year = startYear;
+      let month = startMonth + i;
+
+      if (month > 12) {
+        year += Math.floor((month - 1) / 12);
+        month = ((month - 1) % 12) + 1;
+      }
+
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      displayMonths.push({
+        monthKey,
+        year,
+        month,
+        currentYearData: tripsByMonth[monthKey] || null,
+        previousYearData: tripsByMonth[`${year - 1}-${String(month).padStart(2, '0')}`] || null
+      });
+    }
+  }
+
+  // Format labels and data for chart
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const labels = displayMonths.map(m => {
+    const monthName = monthNames[m.month - 1];
+    const yearShort = String(m.year).slice(-2);
+    const tripCount = m.currentYearData ? m.currentYearData.tripCount : 0;
+    return `${monthName} '${yearShort} (${tripCount})`;
+  });
+
+  const currentYearData = displayMonths.map(m =>
+    m.currentYearData ? m.currentYearData.avgPerTrip : 0
+  );
+
+  const previousYearData = displayMonths.map(m =>
+    m.previousYearData ? m.previousYearData.avgPerTrip : 0
+  );
+
+  // Get period display text
+  const periodStart = displayMonths[0];
+  const periodEnd = displayMonths[11];
+  const periodText = `${monthNames[periodStart.month - 1]} ${periodStart.year} - ${monthNames[periodEnd.month - 1]} ${periodEnd.year}`;
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('yoy-trips-content')">
+        <span class="section-title">📊 Year-over-Year Shopping Trips Comparison</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="yoy-trips-content" class="section-content">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <button class="btn" onclick="scrollYoYTrips(-1)" style="padding: 8px 16px;">
+            ← Previous
+          </button>
+          <div style="font-weight: bold; font-size: 16px; color: #667eea;">
+            ${periodText}
+          </div>
+          <button class="btn" onclick="scrollYoYTrips(1)" style="padding: 8px 16px;">
+            Next →
+          </button>
+        </div>
+
+        <div class="chart-container" style="height: 400px;">
+          <canvas id="yoyTripsChart"></canvas>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center; color: #666; font-size: 14px;">
+          <p><strong>Average cost per shopping trip</strong> - Compare current year vs previous year</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('yoy-trips-section').innerHTML = html;
+
+  // Create the chart
+  setTimeout(() => {
+    const ctx = document.getElementById('yoyTripsChart');
+    if (ctx) {
+      // Destroy existing chart if it exists
+      if (window.yoyTripsChartInstance) {
+        window.yoyTripsChartInstance.destroy();
+      }
+
+      window.yoyTripsChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Current Year',
+              data: currentYearData,
+              backgroundColor: '#667eea',
+              borderColor: '#667eea',
+              borderWidth: 1
+            },
+            {
+              label: 'Previous Year',
+              data: previousYearData,
+              backgroundColor: '#f093fb',
+              borderColor: '#f093fb',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top'
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const monthData = displayMonths[context.dataIndex];
+                  const isCurrentYear = context.datasetIndex === 0;
+                  const data = isCurrentYear ? monthData.currentYearData : monthData.previousYearData;
+
+                  if (!data) {
+                    return context.dataset.label + ': No trips';
+                  }
+
+                  return [
+                    context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr/trip',
+                    'Total: ' + data.totalSpent.toFixed(2) + ' kr',
+                    'Trips: ' + data.tripCount
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Average per Trip (kr)'
+              },
+              ticks: {
+                callback: function(value) {
+                  return value.toFixed(0) + ' kr';
+                }
+              }
+            },
+            x: {
+              title: {
+                display: true,
+                text: 'Month (Trip Count)'
+              }
+            }
+          }
+        }
+      });
+    }
+  }, 100);
+}
+
+function scrollYoYTrips(direction) {
+  if (!yoyTripsStartMonth) return;
+
+  const [year, month] = yoyTripsStartMonth.split('-').map(Number);
+
+  let newMonth = month + direction;
+  let newYear = year;
+
+  if (newMonth > 12) {
+    newMonth = 1;
+    newYear += 1;
+  } else if (newMonth < 1) {
+    newMonth = 12;
+    newYear -= 1;
+  }
+
+  yoyTripsStartMonth = `${newYear}-${String(newMonth).padStart(2, '0')}`;
+  renderYoYTrips();
 }
 
 function toggleSection(id) {
@@ -6906,7 +7147,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.14
+  v3.15
 </footer>
 
 </body>
