@@ -2069,6 +2069,16 @@ function renderDiscounts() {
 let yoyTripsStartMonth = null;
 
 function renderYoYTrips() {
+  // Helper function to get ISO week number
+  const getWeekNumber = (dateString) => {
+    const date = new Date(dateString);
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  };
+
   // Calculate trip data grouped by month
   const tripsByMonth = {};
 
@@ -2088,18 +2098,25 @@ function renderYoYTrips() {
         totalSpent: 0,
         tripCount: 0,
         year: year,
-        month: month
+        month: month,
+        weeks: new Set() // Track distinct weeks with shopping activity
       };
     }
 
     tripsByMonth[monthKey].totalSpent += receipt.totalAmount;
     tripsByMonth[monthKey].tripCount += 1;
+
+    // Add the week number to track distinct weeks
+    const weekNum = getWeekNumber(receipt.date);
+    tripsByMonth[monthKey].weeks.add(weekNum);
   });
 
-  // Calculate average per trip for each month
+  // Calculate average per week for each month
   Object.keys(tripsByMonth).forEach(key => {
     const data = tripsByMonth[key];
-    data.avgPerTrip = data.tripCount > 0 ? data.totalSpent / data.tripCount : 0;
+    const weekCount = data.weeks.size;
+    data.weekCount = weekCount;
+    data.avgPerWeek = weekCount > 0 ? data.totalSpent / weekCount : 0;
   });
 
   // Get all month keys sorted
@@ -2152,15 +2169,19 @@ function renderYoYTrips() {
   const labels = displayMonths.map(m => {
     const monthName = monthNames[m.month - 1];
     const yearShort = String(m.year).slice(-2);
+    const data = m.currentYearData;
+    if (data) {
+      return `${monthName} '${yearShort} (${data.weekCount}w, ${data.tripCount}t)`;
+    }
     return `${monthName} '${yearShort}`;
   });
 
   const currentYearData = displayMonths.map(m =>
-    m.currentYearData ? m.currentYearData.avgPerTrip : 0
+    m.currentYearData ? m.currentYearData.avgPerWeek : 0
   );
 
   const previousYearData = displayMonths.map(m =>
-    m.previousYearData ? m.previousYearData.avgPerTrip : 0
+    m.previousYearData ? m.previousYearData.avgPerWeek : 0
   );
 
   // Get period display text
@@ -2192,7 +2213,8 @@ function renderYoYTrips() {
         </div>
 
         <div style="margin-top: 20px; text-align: center; color: #666; font-size: 14px;">
-          <p><strong>Average cost per shopping trip</strong> - Compare current year vs previous year</p>
+          <p><strong>Average weekly spend</strong> - Compare current year vs previous year</p>
+          <p style="font-size: 12px; color: #999;">Weekly normalization eliminates distortion from variable trip sizes while showing trip frequency for context</p>
         </div>
       </div>
     </div>
@@ -2254,13 +2276,14 @@ function renderYoYTrips() {
                   const data = isPreviousYear ? monthData.previousYearData : monthData.currentYearData;
 
                   if (!data) {
-                    return context.dataset.label + ': No trips';
+                    return context.dataset.label + ': No activity';
                   }
 
                   return [
-                    context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr/trip',
-                    'Total: ' + data.totalSpent.toFixed(2) + ' kr',
-                    'Trips: ' + data.tripCount
+                    context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr/week',
+                    'Total spent: ' + data.totalSpent.toFixed(2) + ' kr',
+                    'Number of weeks: ' + data.weekCount,
+                    'Number of trips: ' + data.tripCount
                   ];
                 }
               }
@@ -2271,7 +2294,7 @@ function renderYoYTrips() {
               beginAtZero: true,
               title: {
                 display: true,
-                text: 'Average per Trip (kr)'
+                text: 'Average Weekly Spend (kr)'
               },
               ticks: {
                 callback: function(value) {
@@ -2282,7 +2305,7 @@ function renderYoYTrips() {
             x: {
               title: {
                 display: true,
-                text: 'Month (Trip Count)'
+                text: 'Month (Weeks with Activity, Trip Count)'
               }
             }
           }
@@ -7332,7 +7355,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.33
+  v3.34
 </footer>
 
 </body>
