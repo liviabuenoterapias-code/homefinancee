@@ -529,6 +529,13 @@ function parseReceiptText(text, filename) {
     const line = lines[i];
     if (!line || line.length < 3) continue;
 
+    // DEBUG: Log GRATULATIONSKORT processing start
+    if (line.includes('GRATULATIONSKORT')) {
+      console.log('🔍 DEBUG: Processing GRATULATIONSKORT at line', i);
+      console.log('  Line text:', JSON.stringify(line));
+      console.log('  Char codes:', Array.from(line).map((c, i) => `${i}:${c}(${c.charCodeAt(0)})`).join(' '));
+    }
+
     let matched = false;
     let pattern = '';
 
@@ -782,6 +789,11 @@ function parseReceiptText(text, filename) {
     if (line.match(/^[\d,]+\s*kg\s*\*\s*[\d,]+\s*kr\/kg\s+[\d,]+\s*$/i)) {
       if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (weight continuation)', startIndex, endIndex });
       continue;
+    }
+
+    // DEBUG: Log GRATULATIONSKORT final status
+    if (line.includes('GRATULATIONSKORT')) {
+      console.log('  Final status: matched =', matched, ', pattern =', pattern || 'NONE');
     }
 
     // No pattern matched
@@ -7335,7 +7347,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.30
+  v3.31
 </footer>
 
 </body>
