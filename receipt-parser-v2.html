@@ -529,13 +529,6 @@ function parseReceiptText(text, filename) {
     const line = lines[i];
     if (!line || line.length < 3) continue;
 
-    // DEBUG: Log GRATULATIONSKORT processing start
-    if (line.includes('GRATULATIONSKORT')) {
-      console.log('🔍 DEBUG: Processing GRATULATIONSKORT at line', i);
-      console.log('  Line text:', JSON.stringify(line));
-      console.log('  Char codes:', Array.from(line).map((c, i) => `${i}:${c}(${c.charCodeAt(0)})`).join(' '));
-    }
-
     let matched = false;
     let pattern = '';
 
@@ -612,20 +605,7 @@ function parseReceiptText(text, filename) {
     // Handles: GRATULATIONSKORT 2st*27,90 55,80, BRIOCHE SESAM 2st*21,90 43,80
     // Very explicit pattern to catch simple quantity items
     // Space between name and quantity is optional (\s*) to handle PDFs with no space
-
-    // DEBUG: Log GRATULATIONSKORT line details
-    if (line.includes('GRATULATIONSKORT')) {
-      console.log('🔍 DEBUG GRATULATIONSKORT line:');
-      console.log('  Line text:', JSON.stringify(line));
-      console.log('  Char codes:', Array.from(line).map((c, i) => `${i}:${c}(${c.charCodeAt(0)})`).join(' '));
-    }
-
     itemMatch = line.match(/^(.+?)\s*(\d+)st\*(\d+,\d+)\s+(\d+,\d+)\s*$/i);
-
-    // DEBUG: Log GRATULATIONSKORT match result
-    if (line.includes('GRATULATIONSKORT')) {
-      console.log('  Pattern 1A match result:', itemMatch);
-    }
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -789,11 +769,6 @@ function parseReceiptText(text, filename) {
     if (line.match(/^[\d,]+\s*kg\s*\*\s*[\d,]+\s*kr\/kg\s+[\d,]+\s*$/i)) {
       if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (weight continuation)', startIndex, endIndex });
       continue;
-    }
-
-    // DEBUG: Log GRATULATIONSKORT final status
-    if (line.includes('GRATULATIONSKORT')) {
-      console.log('  Final status: matched =', matched, ', pattern =', pattern || 'NONE');
     }
 
     // No pattern matched
@@ -1425,16 +1400,17 @@ function renderTrends(selectedYear = null) {
     for (let month = 1; month <= 12; month++) {
       const monthKey = `${year}-${String(month).padStart(2, '0')}`;
       const purchases = analysisInstance.processed.months[monthKey] || [];
-      const totalSpent = purchases.reduce((sum, p) => sum + p.totalPrice, 0);
       const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
       const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
 
-      // Count number of shopping trips (receipts) for this month
-      const tripCount = allReceipts.filter(receipt => {
+      // Get receipts for this month and calculate total from receipts (matches YoY calculation)
+      const monthReceipts = allReceipts.filter(receipt => {
         if (!receipt.date) return false;
         return receipt.date.startsWith(monthKey);
-      }).length;
+      });
 
+      const tripCount = monthReceipts.length;
+      const totalSpent = monthReceipts.reduce((sum, r) => sum + r.totalAmount, 0);
       const avgPerTrip = tripCount > 0 ? totalSpent / tripCount : 0;
 
       data.push({
@@ -2239,17 +2215,17 @@ function renderYoYTrips() {
           labels: labels,
           datasets: [
             {
-              label: 'Current Year',
-              data: currentYearData,
-              backgroundColor: '#667eea',
-              borderColor: '#667eea',
-              borderWidth: 1
-            },
-            {
               label: 'Previous Year',
               data: previousYearData,
               backgroundColor: '#f093fb',
               borderColor: '#f093fb',
+              borderWidth: 1
+            },
+            {
+              label: 'Current Year',
+              data: currentYearData,
+              backgroundColor: '#667eea',
+              borderColor: '#667eea',
               borderWidth: 1
             }
           ]
@@ -2263,10 +2239,19 @@ function renderYoYTrips() {
             },
             tooltip: {
               callbacks: {
+                title: function(context) {
+                  const monthData = displayMonths[context[0].dataIndex];
+                  const isPreviousYear = context[0].datasetIndex === 0;
+                  const year = isPreviousYear ? monthData.year - 1 : monthData.year;
+                  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                  const monthName = monthNames[monthData.month - 1];
+                  const yearShort = String(year).slice(-2);
+                  return `${monthName} '${yearShort}`;
+                },
                 label: function(context) {
                   const monthData = displayMonths[context.dataIndex];
-                  const isCurrentYear = context.datasetIndex === 0;
-                  const data = isCurrentYear ? monthData.currentYearData : monthData.previousYearData;
+                  const isPreviousYear = context.datasetIndex === 0;
+                  const data = isPreviousYear ? monthData.previousYearData : monthData.currentYearData;
 
                   if (!data) {
                     return context.dataset.label + ': No trips';
@@ -7347,7 +7332,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.32
+  v3.33
 </footer>
 
 </body>
