@@ -583,8 +583,8 @@ function parseReceiptText(text, filename) {
       continue;
     }
 
-    // Skip payment/card lines
-    if (line.match(/betalt|kort|swish|kontant|kort\s*nr/i)) {
+    // Skip payment/card lines (use word boundaries to avoid matching "GRATULATIONSKORT")
+    if (line.match(/\b(betalt|kort|swish|kontant)\b|kort\s*nr/i)) {
       if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (payment)', startIndex, endIndex });
       continue;
     }
@@ -7347,7 +7347,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.31
+  v3.32
 </footer>
 
 </body>
