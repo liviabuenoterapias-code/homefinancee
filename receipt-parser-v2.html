@@ -2960,14 +2960,8 @@ function saveCustomMappings(mappings) {
   invalidateProductLibraryCache(); // Clear cache when mappings change
   console.log('✓ Saved to localStorage');
 
-  // Reload analysis to reflect changes
-  if (allReceipts.length > 0) {
-    console.log('📊 Refreshing Analysis tab...');
-    refreshAnalysis();
-    console.log('✓ Analysis refreshed');
-  } else {
-    console.log('⚠️ No receipts loaded, skipping analysis refresh');
-  }
+  // Analysis will be refreshed when user switches to Analysis tab
+  // No need for immediate expensive refresh on every save
 }
 
 // Build product library from all receipts
@@ -7265,7 +7259,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.23
+  v3.24
 </footer>
 
 </body>
