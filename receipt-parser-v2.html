@@ -605,7 +605,20 @@ function parseReceiptText(text, filename) {
     // Handles: GRATULATIONSKORT 2st*27,90 55,80, BRIOCHE SESAM 2st*21,90 43,80
     // Very explicit pattern to catch simple quantity items
     // Space between name and quantity is optional (\s*) to handle PDFs with no space
+
+    // DEBUG: Log GRATULATIONSKORT line details
+    if (line.includes('GRATULATIONSKORT')) {
+      console.log('🔍 DEBUG GRATULATIONSKORT line:');
+      console.log('  Line text:', JSON.stringify(line));
+      console.log('  Char codes:', Array.from(line).map((c, i) => `${i}:${c}(${c.charCodeAt(0)})`).join(' '));
+    }
+
     itemMatch = line.match(/^(.+?)\s*(\d+)st\*(\d+,\d+)\s+(\d+,\d+)\s*$/i);
+
+    // DEBUG: Log GRATULATIONSKORT match result
+    if (line.includes('GRATULATIONSKORT')) {
+      console.log('  Pattern 1A match result:', itemMatch);
+    }
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -7322,7 +7335,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.29
+  v3.30
 </footer>
 
 </body>
