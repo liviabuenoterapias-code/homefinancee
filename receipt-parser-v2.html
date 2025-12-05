@@ -742,7 +742,32 @@ function parseReceiptText(text, filename) {
     if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'No pattern matched', startIndex, endIndex });
   }
 
+  // Enrich items with productType and storeSection from library history
+  enrichItemsFromLibrary(receipt);
+
   return receipt;
+}
+
+// Enrich receipt items with productType and storeSection from library
+function enrichItemsFromLibrary(receipt) {
+  const customMappings = loadCustomMappings();
+
+  receipt.items.forEach(item => {
+    // Check if we have custom mapping for this exact product name
+    const mapping = customMappings[item.name];
+
+    if (mapping) {
+      // Apply productType if available in library
+      if (mapping.productType) {
+        item.productType = mapping.productType;
+      }
+
+      // Apply storeSection if available in library
+      if (mapping.storeSection) {
+        item.storeSection = mapping.storeSection;
+      }
+    }
+  });
 }
 
 function displayAllReceipts() {
@@ -7264,7 +7289,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.25
+  v3.26
 </footer>
 
 </body>
