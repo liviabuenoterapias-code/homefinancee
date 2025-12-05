@@ -785,7 +785,7 @@ function displayAllReceipts() {
       <div class="receipt-header" onclick="toggleReceiptContent(${index}, event)">
         <div class="receipt-info">
           <div class="receipt-date">
-            <span class="receipt-collapse-indicator" id="collapse-indicator-${index}">▼</span>
+            <span class="receipt-collapse-indicator collapsed" id="collapse-indicator-${index}">▼</span>
             ${receipt.date} ${receipt.time}
           </div>
           <div class="receipt-store">Med ${receipt.store} har du sparat: ${receipt.totalDiscount.toFixed(2)} • ${productCount} products (${totalItemCount} items)</div>
@@ -794,7 +794,7 @@ function displayAllReceipts() {
         <button class="btn btn-delete" onclick="event.stopPropagation(); deleteReceipt(${index})">🗑️ Delete</button>
       </div>
 
-      <div class="receipt-content" id="receipt-content-${index}">
+      <div class="receipt-content collapsed" id="receipt-content-${index}">
       <table class="items-table">
         <thead>
           <tr>
@@ -7281,7 +7281,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.20
+  v3.21
 </footer>
 
 </body>
