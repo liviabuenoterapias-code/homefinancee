@@ -3413,9 +3413,6 @@ function renderProductLibrary(searchFilter = '') {
     </div>
 
     <!-- Shared datalists for all inputs (performance optimization) -->
-    <datalist id="shared-product-types">
-      ${categories.map(cat => `<option value="${cat}">`).join('')}
-    </datalist>
     <datalist id="shared-tags-list">
       ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
     </datalist>
@@ -3476,16 +3473,19 @@ function renderProductLibrary(searchFilter = '') {
                 />
               </td>
               <td>
-                <input
-                  type="text"
-                  list="shared-product-types"
-                  value="${p.productType || ''}"
+                <select
                   data-raw="${p.rawName}"
                   data-field="productType"
                   onchange="updateProductMapping(this)"
-                  placeholder="Type..."
-                  style="font-size: 13px;"
-                />
+                  style="font-size: 13px; width: 100%;"
+                >
+                  <option value="">Select type...</option>
+                  ${categories.map(cat => `
+                    <option value="${cat}" ${p.productType === cat ? 'selected' : ''}>
+                      ${cat}
+                    </option>
+                  `).join('')}
+                </select>
               </td>
               <td>
                 <select
@@ -3683,30 +3683,13 @@ function updateProductMapping(element) {
     }
   }
 
-  // PERFORMANCE OPTIMIZATION: Only refresh analysis when productType changes
-  // productType affects how items are categorized across all receipts and analysis
-  // productName, brand, and storeSection changes are saved to localStorage and will
-  // be reflected when analysis is next loaded - no need for immediate expensive refresh
-  const needsFullRefresh = field === 'productType';
+  // PERFORMANCE OPTIMIZATION: No immediate refresh needed for any field changes
+  // All changes (productName, productType, brand, storeSection) are saved to localStorage
+  // and will be reflected when analysis is next loaded or tab is switched
+  // This provides instant editing experience without expensive re-renders
 
-  if (needsFullRefresh) {
-    // Reanalyze all receipts to reflect changes in all tabs
-    refreshAnalysis();
-
-    // Save scroll position before re-rendering
-    const scrollContainer = document.getElementById('product-library-scroll-container');
-    const scrollPosition = scrollContainer ? scrollContainer.scrollTop : 0;
-
-    renderProductLibrary(document.getElementById('productSearch').value);
-
-    // Restore scroll position after re-rendering
-    requestAnimationFrame(() => {
-      const scrollContainerAfter = document.getElementById('product-library-scroll-container');
-      if (scrollContainerAfter) {
-        scrollContainerAfter.scrollTop = scrollPosition;
-      }
-    });
-  } else {
+  // Just update the visual indicator if needed
+  if (true) {
     // Just update the visual indicator if needed
     if (!element.nextElementSibling || !element.nextElementSibling.classList?.contains('edit-indicator')) {
       const indicator = document.createElement('span');
@@ -7282,7 +7265,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.22
+  v3.23
 </footer>
 
 </body>
