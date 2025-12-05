@@ -603,26 +603,31 @@ function parseReceiptText(text, filename) {
 
     // PATTERN 1A: Simplified format for single-word products - NAME QTYst*PRICE TOTAL
     // Handles: GRATULATIONSKORT 2st*27,90 55,80
-    let itemMatch = line.match(/^([A-ZÅÄÖÉÈÊËÀÂÏÎÔÙÛÇ][A-ZÅÄÖÉÈÊËÀÂÏÎÔÙÛÇ]+)\s+(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    // Try very permissive pattern first - any text before quantity
+    let itemMatch = line.match(/^(.+?)\s+(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
-      const qty = parseInt(itemMatch[2]);
-      const unitPrice = parseFloat(itemMatch[3].replace(',', '.'));
-      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
 
-      lastItem = {
-        name: name,
-        quantity: qty,
-        unitPrice: unitPrice,
-        totalPrice: totalPrice,
-        discount: 0
-      };
-      receipt.items.push(lastItem);
-      matched = true;
-      pattern = 'Pattern 1A (Simple Qty*Price)';
-      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
-      continue;
+      // Only accept if name doesn't contain numbers (to avoid matching size info)
+      if (!name.match(/\d/)) {
+        const qty = parseInt(itemMatch[2]);
+        const unitPrice = parseFloat(itemMatch[3].replace(',', '.'));
+        const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+        lastItem = {
+          name: name,
+          quantity: qty,
+          unitPrice: unitPrice,
+          totalPrice: totalPrice,
+          discount: 0
+        };
+        receipt.items.push(lastItem);
+        matched = true;
+        pattern = 'Pattern 1A (Simple Qty*Price)';
+        if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+        continue;
+      }
     }
 
     // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
@@ -7313,7 +7318,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.27
+  v3.28
 </footer>
 
 </body>
