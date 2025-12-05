@@ -2064,8 +2064,7 @@ function renderYoYTrips() {
   const labels = displayMonths.map(m => {
     const monthName = monthNames[m.month - 1];
     const yearShort = String(m.year).slice(-2);
-    const tripCount = m.currentYearData ? m.currentYearData.tripCount : 0;
-    return `${monthName} '${yearShort} (${tripCount})`;
+    return `${monthName} '${yearShort}`;
   });
 
   const currentYearData = displayMonths.map(m =>
@@ -7234,7 +7233,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.16
+  v3.17
 </footer>
 
 </body>
