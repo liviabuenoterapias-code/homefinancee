@@ -24,7 +24,12 @@ h1 { color: #764ba2; text-align: center; margin-bottom: 30px; }
 .error { background: #f8d7da; color: #721c24; }
 .info { background: #d1ecf1; color: #0c5460; }
 .receipt-card { background: #f9f9f9; padding: 20px; margin-bottom: 15px; border-radius: 10px; border-left: 4px solid #667eea; }
-.receipt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0; }
+.receipt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0; cursor: pointer; user-select: none; }
+.receipt-header:hover { background-color: #f0f0f0; margin: -5px -10px 15px -10px; padding: 5px 10px 20px 10px; border-radius: 5px; }
+.receipt-collapse-indicator { font-size: 20px; margin-left: 10px; transition: transform 0.3s; display: inline-block; }
+.receipt-collapse-indicator.collapsed { transform: rotate(-90deg); }
+.receipt-content { overflow: hidden; transition: max-height 0.3s ease-out; }
+.receipt-content.collapsed { max-height: 0; }
 .receipt-info { flex: 1; }
 .receipt-date { font-size: 18px; font-weight: bold; color: #667eea; }
 .receipt-store { color: #666; margin-top: 5px; }
@@ -777,15 +782,19 @@ function displayAllReceipts() {
 
     return `
     <div class="receipt-card">
-      <div class="receipt-header">
+      <div class="receipt-header" onclick="toggleReceiptContent(${index}, event)">
         <div class="receipt-info">
-          <div class="receipt-date">${receipt.date} ${receipt.time}</div>
-          <div class="receipt-store">${receipt.store} • ${productCount} products (${totalItemCount} items)</div>
+          <div class="receipt-date">
+            <span class="receipt-collapse-indicator" id="collapse-indicator-${index}">▼</span>
+            ${receipt.date} ${receipt.time}
+          </div>
+          <div class="receipt-store">Med ${receipt.store} har du sparat: ${receipt.totalDiscount.toFixed(2)} • ${productCount} products (${totalItemCount} items)</div>
         </div>
         <div class="receipt-total">${receipt.totalAmount.toFixed(2)} kr</div>
-        <button class="btn btn-delete" onclick="deleteReceipt(${index})">🗑️ Delete</button>
+        <button class="btn btn-delete" onclick="event.stopPropagation(); deleteReceipt(${index})">🗑️ Delete</button>
       </div>
 
+      <div class="receipt-content" id="receipt-content-${index}">
       <table class="items-table">
         <thead>
           <tr>
@@ -846,6 +855,7 @@ function displayAllReceipts() {
           </div>
         </details>
       ` : ''}
+      </div>
     </div>
   `;
   }).join('');
@@ -862,6 +872,24 @@ function deleteReceipt(index) {
     saveReceipts();
     displayAllReceipts();
     showMessage('Receipt deleted', 'info');
+  }
+}
+
+function toggleReceiptContent(index, event) {
+  // Don't toggle if clicking the delete button
+  if (event && event.target.closest('.btn-delete')) {
+    return;
+  }
+
+  const content = document.getElementById(`receipt-content-${index}`);
+  const indicator = document.getElementById(`collapse-indicator-${index}`);
+
+  if (content.classList.contains('collapsed')) {
+    content.classList.remove('collapsed');
+    indicator.classList.remove('collapsed');
+  } else {
+    content.classList.add('collapsed');
+    indicator.classList.add('collapsed');
   }
 }
 
@@ -7233,7 +7261,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.17
+  v3.18
 </footer>
 
 </body>
