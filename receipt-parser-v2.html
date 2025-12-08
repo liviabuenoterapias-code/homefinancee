@@ -1035,6 +1035,14 @@ function switchTab(tabName) {
       renderProductLibrary();
     }
   }
+
+  // If switching to shopping list, refresh suggestions and list
+  if (tabName === 'shopping-list') {
+    if (allReceipts.length > 0) {
+      generateSuggestions();
+      renderShoppingList();
+    }
+  }
 }
 
 // Analysis functions
@@ -6009,7 +6017,10 @@ function generateSuggestions() {
   const now = new Date();
   const suggestions = [];
 
+  console.log(`🔍 Shopping List Debug: Processing ${Object.keys(groupedProducts).length} unique products`);
+
   // Calculate frequency and create suggestions
+  const weeklyDebug = [];
   Object.values(groupedProducts).forEach(group => {
     const purchases = group.purchases;
     if (purchases.length < 2) return; // Need at least 2 purchases
@@ -6017,6 +6028,16 @@ function generateSuggestions() {
     // Calculate weekly frequency
     const weeklyFrequency = calculateWeeklyFrequency(purchases);
     const isWeekly = weeklyFrequency >= 75; // 75% threshold - user can dismiss unwanted items
+
+    // Debug weekly items
+    if (weeklyFrequency > 0) {
+      weeklyDebug.push({
+        name: group.name,
+        frequency: weeklyFrequency,
+        isWeekly: isWeekly,
+        purchases: purchases.length
+      });
+    }
 
     // Check if it's a staple
     const isStaple = stapleNames.has(group.name.toLowerCase());
@@ -6103,6 +6124,10 @@ function generateSuggestions() {
     }
   });
 
+  console.log(`📊 Weekly items found: ${weeklyDebug.filter(d => d.isWeekly).length} of ${weeklyDebug.length} items with weekly pattern`);
+  console.log('Top weekly candidates:', weeklyDebug.sort((a, b) => b.frequency - a.frequency).slice(0, 10));
+  console.log(`💡 Total suggestions before filtering: ${suggestions.length} (${suggestions.filter(s => s.isWeekly).length} weekly, ${suggestions.filter(s => !s.isWeekly).length} overdue staples)`);
+
   // Filter out dismissed, snoozed, and items already in shopping list
   const filteredSuggestions = suggestions.filter(sug => {
     const key = sug.name.toLowerCase();
@@ -6130,6 +6155,10 @@ function generateSuggestions() {
     }
     return b.daysSince - a.daysSince; // More overdue first
   });
+
+  const filtered = suggestions.length - filteredSuggestions.length;
+  console.log(`🔒 Filtered out ${filtered} items (dismissed: ${Object.keys(dismissed).length}, snoozed: ${Object.keys(snoozed).length}, already in list: ${currentListNames.size})`);
+  console.log(`✅ Final suggestions to display: ${filteredSuggestions.length}`);
 
   renderSuggestions(filteredSuggestions);
 }
@@ -7354,7 +7383,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.38
+  v3.39
 </footer>
 
 </body>
