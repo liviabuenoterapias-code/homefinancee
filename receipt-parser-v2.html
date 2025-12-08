@@ -5912,15 +5912,24 @@ function saveDismissedSuggestionsV3(dismissed) {
   localStorage.setItem('dismissedSuggestions_v2', JSON.stringify(dismissed));
 }
 
-// v3.0: Weekly pattern detection - returns % of weeks item was purchased
+// v3.39: Weekly pattern detection - returns % of weeks item was purchased IN LAST 6 MONTHS
 function calculateWeeklyFrequency(purchases) {
   if (purchases.length < 4) return 0; // Need at least 4 purchases for pattern
 
-  const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
+  // Filter to last 6 months only
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+  const recentPurchases = purchases.filter(p => p.date >= sixMonthsAgo);
+
+  // Need at least 4 purchases in the last 6 months
+  if (recentPurchases.length < 4) return 0;
+
+  const sortedDates = recentPurchases.map(p => p.date).sort((a, b) => a - b);
   const firstPurchase = sortedDates[0];
   const lastPurchase = sortedDates[sortedDates.length - 1];
 
-  // Calculate total weeks from first to last purchase
+  // Calculate total weeks from first to last purchase (within 6-month window)
   const totalDays = (lastPurchase - firstPurchase) / (1000 * 60 * 60 * 24);
 
   // Require at least 4 weeks of data to establish weekly pattern
@@ -5930,7 +5939,7 @@ function calculateWeeklyFrequency(purchases) {
 
   // Group purchases by week (and by unique date to avoid same-day duplicates)
   const weekDates = new Map(); // week -> Set of unique dates
-  purchases.forEach(p => {
+  recentPurchases.forEach(p => {
     const weekNumber = Math.floor((p.date - firstPurchase) / (1000 * 60 * 60 * 24 * 7));
     const dateKey = p.date.toDateString();
 
@@ -6017,7 +6026,7 @@ function generateSuggestions() {
   const now = new Date();
   const suggestions = [];
 
-  console.log(`🔍 Shopping List Debug: Processing ${Object.keys(groupedProducts).length} unique products`);
+  console.log(`🔍 Shopping List Debug: Processing ${Object.keys(groupedProducts).length} unique products (weekly frequency based on last 6 months)`);
 
   // Calculate frequency and create suggestions
   const weeklyDebug = [];
@@ -7383,7 +7392,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.39
+  v3.40
 </footer>
 
 </body>
