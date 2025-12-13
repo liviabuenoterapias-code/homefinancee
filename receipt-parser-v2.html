@@ -605,7 +605,7 @@ function parseReceiptText(text, filename) {
     // Handles: GRATULATIONSKORT 2st*27,90 55,80, BRIOCHE SESAM 2st*21,90 43,80
     // Very explicit pattern to catch simple quantity items
     // Space between name and quantity is optional (\s*) to handle PDFs with no space
-    itemMatch = line.match(/^(.+?)\s*(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^(.*?\S)\s*(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -636,7 +636,7 @@ function parseReceiptText(text, filename) {
 
     // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
     // Supports: JUICE 1.75L 2st*34,90 69,80, BIG KIDS +6 ÅR 2st*20,90 41,80, ROAST`N TOAST 800G, etc.
-    itemMatch = line.match(/^(.+?)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^(.*?\S)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -660,7 +660,7 @@ function parseReceiptText(text, filename) {
 
     // PATTERN 2: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
     // Check weight patterns BEFORE simple pattern to capture kg prices
-    itemMatch = line.match(/^(.+?)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^(.*?\S)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -734,7 +734,7 @@ function parseReceiptText(text, filename) {
     // PATTERN 4: Simple format - NAME PRICE (no quantity)
     // Checked AFTER weight patterns so kg prices are captured first
     // Supports: +PANT ENG PET <=1L 1,00, FISH & CRISP 55,80, ROAST`N TOAST 800G 32,90, ÄPPLE (without weight info), etc.
-    itemMatch = line.match(/^(.+?)\s+([\d,]+)\s*$/i);
+    itemMatch = line.match(/^(.*?\S)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -7392,7 +7392,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.43
+  v3.44
 </footer>
 
 </body>
