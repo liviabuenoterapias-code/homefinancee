@@ -605,7 +605,7 @@ function parseReceiptText(text, filename) {
     // Handles: GRATULATIONSKORT 2st*27,90 55,80, BRIOCHE SESAM 2st*21,90 43,80
     // Very explicit pattern to catch simple quantity items
     // Space between name and quantity is optional (\s*) to handle PDFs with no space
-    itemMatch = line.match(/^(.+?)\s*(\d+)st\*(\d+,\d+)\s+(\d+,\d+)\s*$/i);
+    itemMatch = line.match(/^(.+?)\s*(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
 
     if (itemMatch) {
       const name = itemMatch[1].trim();
@@ -7392,7 +7392,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.42
+  v3.43
 </footer>
 
 </body>
