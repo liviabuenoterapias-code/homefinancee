@@ -328,6 +328,8 @@ select, input[type="month"] { padding: 8px 12px; border: 1px solid #ddd; border-
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 let allReceipts = [];
+let receiptsVersion = 0; // Increment when receipts change to invalidate caches
+let cachedSuggestions = null; // Cache for shopping list suggestions
 
 window.addEventListener('load', () => {
   const saved = localStorage.getItem('groceryReceipts_v2');
@@ -970,7 +972,10 @@ function clearAll() {
 
 function saveReceipts() {
   localStorage.setItem('groceryReceipts_v2', JSON.stringify(allReceipts));
+  receiptsVersion++; // Increment version to invalidate all caches
   invalidateProductLibraryCache(); // Clear cache when receipts change
+  analysisInstance = null; // Clear analysis cache
+  cachedSuggestions = null; // Clear suggestions cache
 }
 
 function exportToCSV() {
@@ -1055,6 +1060,7 @@ function switchTab(tabName) {
 
 // Analysis functions
 let analysisInstance = null;
+let analysisVersion = -1; // Track which version of receipts was analyzed
 let modalNavigationContext = null; // Track where we came from (e.g., {type: 'tag', tag: 'coffee'})
 
 function refreshAnalysis() {
@@ -1069,7 +1075,11 @@ function refreshAnalysis() {
     return;
   }
 
-  analysisInstance = new GroceryAnalysis(allReceipts);
+  // PERFORMANCE: Only create new analysis instance if receipts changed
+  if (!analysisInstance || analysisVersion !== receiptsVersion) {
+    analysisInstance = new GroceryAnalysis(allReceipts);
+    analysisVersion = receiptsVersion;
+  }
   const summary = analysisInstance.getSummaryStats();
 
   document.getElementById('analysis-content').innerHTML = `
@@ -5974,8 +5984,10 @@ function generateSuggestions() {
   }
 
   // Use analysis instance to get staple products (most frequently purchased)
-  if (!analysisInstance) {
+  // PERFORMANCE: Only create new analysis instance if receipts changed
+  if (!analysisInstance || analysisVersion !== receiptsVersion) {
     analysisInstance = new GroceryAnalysis(allReceipts);
+    analysisVersion = receiptsVersion;
   }
 
   // Get top 50 staple products (purchased regularly)
@@ -7400,7 +7412,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.48
+  v3.49
 </footer>
 
 </body>
