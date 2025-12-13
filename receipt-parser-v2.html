@@ -533,7 +533,7 @@ function parseReceiptText(text, filename) {
     let pattern = '';
 
     // Skip obvious non-item lines
-    if (line.match(/^(=+|-+|Kvitto|Butik|Datum|Tid|Kassa|Org)/i)) {
+    if (line.match(/^(=+|-+|Kvitto\b|Butik\b|Datum\b|Tid\b|Kassa\b|Org\b)/i)) {
       if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (header/separator)', startIndex, endIndex });
       continue;
     }
@@ -7397,7 +7397,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.46
+  v3.47
 </footer>
 
 </body>
