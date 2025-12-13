@@ -912,7 +912,7 @@ function displayAllReceipts() {
             ${receipt.debugInfo.map(info => `
               <div style="margin-top: 5px; padding: 5px; background: ${info.matched ? '#d4edda' : '#f8d7da'};">
                 <strong>Line ${info.lineNum}:</strong> "${info.line}"
-                ${info.matched ? '✓ Matched as: ' + info.pattern : '✗ No match'}
+                ${info.matched ? '✓ Matched as: ' + info.pattern : '✗ No match' + (info.pattern ? ' (' + info.pattern + ')' : '')}
               </div>
             `).join('')}
           </div>
@@ -7397,7 +7397,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.45
+  v3.46
 </footer>
 
 </body>
