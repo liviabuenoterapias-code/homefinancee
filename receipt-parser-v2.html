@@ -838,6 +838,10 @@ function displayAllReceipts() {
 
   // Display receipts
   const container = document.getElementById('receipts');
+
+  // PERFORMANCE: Load custom mappings ONCE, not inside the loop
+  const customMappings = loadCustomMappings();
+
   container.innerHTML = allReceipts.map((receipt, index) => {
     // Calculate total items (sum of quantities)
     const totalItemCount = receipt.items.reduce((sum, item) => sum + item.quantity, 0);
@@ -871,7 +875,6 @@ function displayAllReceipts() {
         <tbody>
           ${receipt.items.map((item, itemIndex) => {
             // Get the mapped product name
-            const customMappings = loadCustomMappings();
             const customData = customMappings[item.name];
             let productName;
             if (customData?.productName) {
@@ -7397,7 +7400,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.47
+  v3.48
 </footer>
 
 </body>
