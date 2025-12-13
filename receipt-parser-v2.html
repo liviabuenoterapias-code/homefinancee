@@ -758,10 +758,15 @@ function parseReceiptText(text, filename) {
           pattern = 'Skipped (total line)';
         }
       } else {
-        pattern = 'Failed validation';
+        pattern = `Failed validation (len:${name.length}, price:${price})`;
       }
-      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, name, price, startIndex, endIndex });
       continue;
+    } else {
+      // Debug: Pattern 4 didn't match at all
+      if (debugMode && line.includes('ALCOHOL')) {
+        receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Pattern 4 NO REGEX MATCH', lineChars: [...line].map(c => c.charCodeAt(0)), startIndex, endIndex });
+      }
     }
 
     // PATTERN 5: Just weight line (continuation from previous)
@@ -7392,7 +7397,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.44
+  v3.45
 </footer>
 
 </body>
