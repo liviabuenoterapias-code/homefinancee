@@ -1567,7 +1567,7 @@ function renderTrends(selectedYear = null) {
       // Build datasets array (bell curve visualization first for background rendering)
       const datasets = [];
 
-      // v3.50: Add ±1 standard deviation gradient area (subtle background)
+      // v3.51: Add ±1 standard deviation gradient area (purple shade for visibility)
       if (stats.mean > 0 && stats.stdDev > 0) {
         const upperBound = stats.mean + stats.stdDev;
         const lowerBound = Math.max(0, stats.mean - stats.stdDev);
@@ -1575,8 +1575,8 @@ function renderTrends(selectedYear = null) {
         datasets.push({
           label: '±1 Std Dev Range',
           data: Array(12).fill(upperBound),
-          borderColor: 'rgba(150, 150, 150, 0)',
-          backgroundColor: 'rgba(150, 150, 150, 0.08)',
+          borderColor: 'rgba(102, 126, 234, 0)',
+          backgroundColor: 'rgba(102, 126, 234, 0.15)',
           fill: '+1', // Fill to next dataset
           tension: 0,
           borderWidth: 0,
@@ -1587,7 +1587,7 @@ function renderTrends(selectedYear = null) {
         datasets.push({
           label: 'Lower Bound',
           data: Array(12).fill(lowerBound),
-          borderColor: 'rgba(150, 150, 150, 0)',
+          borderColor: 'rgba(102, 126, 234, 0)',
           backgroundColor: 'rgba(255, 255, 255, 0)',
           fill: false,
           tension: 0,
@@ -1597,12 +1597,12 @@ function renderTrends(selectedYear = null) {
         });
       }
 
-      // v3.50: Add median line (subtle dashed line)
+      // v3.51: Add median line (purple shade to match theme)
       if (stats.median > 0) {
         datasets.push({
           label: `Median: ${stats.median.toLocaleString('sv-SE', {minimumFractionDigits: 0, maximumFractionDigits: 0})} kr`,
           data: Array(12).fill(stats.median),
-          borderColor: 'rgba(100, 100, 100, 0.4)',
+          borderColor: 'rgba(102, 126, 234, 0.5)',
           backgroundColor: 'rgba(0, 0, 0, 0)',
           borderDash: [8, 4],
           borderWidth: 1.5,
@@ -7487,7 +7487,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.50
+  v3.51
 </footer>
 
 </body>
