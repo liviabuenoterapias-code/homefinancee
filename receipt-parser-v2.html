@@ -1729,45 +1729,35 @@ function renderTrends(selectedYear = null) {
               }
             },
             y2: {
-              beginAtZero: true,
+              type: 'linear',
+              display: true,
               position: 'right',
+              beginAtZero: true,
               grid: {
                 drawOnChartArea: false // Don't draw grid lines from this axis
               },
-              ticks: {
-                callback: function(value) {
-                  // Format the value
-                  const formatted = value.toLocaleString('sv-SE', {minimumFractionDigits: 0, maximumFractionDigits: 0});
-
-                  // Check if this value matches one of our key stats
-                  const upperBound = Math.round(stats.mean + stats.stdDev);
-                  const lowerBound = Math.round(Math.max(0, stats.mean - stats.stdDev));
-                  const median = Math.round(stats.median);
-
-                  if (Math.abs(value - upperBound) < 50) {
-                    return 'High: ' + formatted;
-                  } else if (Math.abs(value - median) < 50) {
-                    return 'Med: ' + formatted;
-                  } else if (Math.abs(value - lowerBound) < 50) {
-                    return 'Low: ' + formatted;
-                  }
-                  return ''; // Hide other ticks
-                },
-                // Force specific tick values
-                autoSkip: false,
-                includeBounds: false
+              min: 0,
+              max: function(context) {
+                return context.chart.scales.y.max; // Match left axis
               },
-              afterBuildTicks: function(axis) {
-                // Override ticks to show only our three values
-                const upperBound = stats.mean + stats.stdDev;
-                const lowerBound = Math.max(0, stats.mean - stats.stdDev);
-                const median = stats.median;
+              ticks: {
+                count: 3,
+                callback: function(value, index, ticks) {
+                  // Calculate our three key values
+                  const upperBound = stats.mean + stats.stdDev;
+                  const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+                  const median = stats.median;
 
-                axis.ticks = [
-                  { value: lowerBound },
-                  { value: median },
-                  { value: upperBound }
-                ];
+                  // Show only our specific values
+                  if (index === 0) {
+                    return 'Low: ' + Math.round(lowerBound).toLocaleString('sv-SE');
+                  } else if (index === 1) {
+                    return 'Med: ' + Math.round(median).toLocaleString('sv-SE');
+                  } else if (index === 2) {
+                    return 'High: ' + Math.round(upperBound).toLocaleString('sv-SE');
+                  }
+                  return '';
+                }
               }
             }
           }
@@ -7537,7 +7527,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.54
+  v3.55
 </footer>
 
 </body>
