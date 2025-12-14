@@ -1507,8 +1507,7 @@ function renderTrends(selectedYear = null) {
             </label>
           </div>
           <button onclick="renderTrends(${selectedYear + 1})"
-                  style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;"
-                  ${selectedYear >= new Date().getFullYear() ? 'disabled style="background: #ccc; cursor: not-allowed;"' : ''}>
+                  style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
             ${selectedYear + 1} →
           </button>
         </div>
@@ -7540,7 +7539,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.56
+  v3.57
 </footer>
 
 </body>
