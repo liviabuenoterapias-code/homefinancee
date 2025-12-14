@@ -1567,7 +1567,7 @@ function renderTrends(selectedYear = null) {
       // Build datasets array (bell curve visualization first for background rendering)
       const datasets = [];
 
-      // v3.52: Add ±1 standard deviation gradient area (warm orange for visibility)
+      // v3.53: Add ±1 standard deviation gradient area (warm orange for visibility)
       if (stats.mean > 0 && stats.stdDev > 0) {
         const upperBound = stats.mean + stats.stdDev;
         const lowerBound = Math.max(0, stats.mean - stats.stdDev);
@@ -1581,7 +1581,8 @@ function renderTrends(selectedYear = null) {
           tension: 0,
           borderWidth: 0,
           pointRadius: 0,
-          order: 10 // Render in background
+          order: 10, // Render in background
+          hidden: true // Hide from legend
         });
 
         datasets.push({
@@ -1593,14 +1594,15 @@ function renderTrends(selectedYear = null) {
           tension: 0,
           borderWidth: 0,
           pointRadius: 0,
-          order: 10 // Render in background
+          order: 10, // Render in background
+          hidden: true // Hide from legend
         });
       }
 
-      // v3.52: Add median line (warm orange to complement gradient)
+      // v3.53: Add median line (warm orange to complement gradient)
       if (stats.median > 0) {
         datasets.push({
-          label: `Median: ${stats.median.toLocaleString('sv-SE', {minimumFractionDigits: 0, maximumFractionDigits: 0})} kr`,
+          label: 'Median',
           data: Array(12).fill(stats.median),
           borderColor: 'rgba(255, 130, 70, 0.6)',
           backgroundColor: 'rgba(0, 0, 0, 0)',
@@ -1609,7 +1611,8 @@ function renderTrends(selectedYear = null) {
           pointRadius: 0,
           fill: false,
           tension: 0,
-          order: 5 // Render between background and foreground
+          order: 5, // Render between background and foreground
+          hidden: true // Hide from legend
         });
       }
 
@@ -1714,10 +1717,53 @@ function renderTrends(selectedYear = null) {
           scales: {
             y: {
               beginAtZero: true,
+              position: 'left',
               ticks: {
                 callback: function(value) {
                   return value + ' kr';
                 }
+              }
+            },
+            y2: {
+              beginAtZero: true,
+              position: 'right',
+              grid: {
+                drawOnChartArea: false // Don't draw grid lines from this axis
+              },
+              ticks: {
+                callback: function(value) {
+                  // Format the value
+                  const formatted = value.toLocaleString('sv-SE', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+
+                  // Check if this value matches one of our key stats
+                  const upperBound = Math.round(stats.mean + stats.stdDev);
+                  const lowerBound = Math.round(Math.max(0, stats.mean - stats.stdDev));
+                  const median = Math.round(stats.median);
+
+                  if (Math.abs(value - upperBound) < 50) {
+                    return 'High: ' + formatted;
+                  } else if (Math.abs(value - median) < 50) {
+                    return 'Med: ' + formatted;
+                  } else if (Math.abs(value - lowerBound) < 50) {
+                    return 'Low: ' + formatted;
+                  }
+                  return ''; // Hide other ticks
+                },
+                // Force specific tick values
+                autoSkip: false,
+                includeBounds: false
+              },
+              afterBuildTicks: function(axis) {
+                // Override ticks to show only our three values
+                const upperBound = stats.mean + stats.stdDev;
+                const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+                const median = stats.median;
+
+                axis.ticks = [
+                  { value: lowerBound },
+                  { value: median },
+                  { value: upperBound }
+                ];
               }
             }
           }
@@ -7487,7 +7533,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.52
+  v3.53
 </footer>
 
 </body>
