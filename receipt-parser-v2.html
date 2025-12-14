@@ -1567,7 +1567,7 @@ function renderTrends(selectedYear = null) {
       // Build datasets array (bell curve visualization first for background rendering)
       const datasets = [];
 
-      // v3.53: Add ±1 standard deviation gradient area (warm orange for visibility)
+      // v3.54: Add ±1 standard deviation gradient area (warm orange for visibility)
       if (stats.mean > 0 && stats.stdDev > 0) {
         const upperBound = stats.mean + stats.stdDev;
         const lowerBound = Math.max(0, stats.mean - stats.stdDev);
@@ -1581,8 +1581,7 @@ function renderTrends(selectedYear = null) {
           tension: 0,
           borderWidth: 0,
           pointRadius: 0,
-          order: 10, // Render in background
-          hidden: true // Hide from legend
+          order: 10 // Render in background
         });
 
         datasets.push({
@@ -1594,12 +1593,11 @@ function renderTrends(selectedYear = null) {
           tension: 0,
           borderWidth: 0,
           pointRadius: 0,
-          order: 10, // Render in background
-          hidden: true // Hide from legend
+          order: 10 // Render in background
         });
       }
 
-      // v3.53: Add median line (warm orange to complement gradient)
+      // v3.54: Add median line (warm orange to complement gradient)
       if (stats.median > 0) {
         datasets.push({
           label: 'Median',
@@ -1611,8 +1609,7 @@ function renderTrends(selectedYear = null) {
           pointRadius: 0,
           fill: false,
           tension: 0,
-          order: 5, // Render between background and foreground
-          hidden: true // Hide from legend
+          order: 5 // Render between background and foreground
         });
       }
 
@@ -1682,7 +1679,14 @@ function renderTrends(selectedYear = null) {
           maintainAspectRatio: false,
           plugins: {
             legend: {
-              position: 'top'
+              position: 'top',
+              labels: {
+                filter: function(legendItem, chartData) {
+                  // Hide statistical datasets from legend
+                  const label = legendItem.text;
+                  return label !== '±1 Std Dev Range' && label !== 'Lower Bound' && label !== 'Median';
+                }
+              }
             },
             tooltip: {
               callbacks: {
@@ -7533,7 +7537,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.53
+  v3.54
 </footer>
 
 </body>
