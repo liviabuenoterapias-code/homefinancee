@@ -1740,21 +1740,34 @@ function renderTrends(selectedYear = null) {
               max: function(context) {
                 return context.chart.scales.y.max; // Match left axis
               },
+              afterBuildTicks: function(axis) {
+                // Position ticks at exact statistical values
+                const upperBound = stats.mean + stats.stdDev;
+                const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+                const median = stats.median;
+
+                // Override with our custom tick positions
+                axis.ticks = [
+                  { value: lowerBound },
+                  { value: median },
+                  { value: upperBound }
+                ];
+              },
               ticks: {
-                count: 3,
                 callback: function(value, index, ticks) {
                   // Calculate our three key values
                   const upperBound = stats.mean + stats.stdDev;
                   const lowerBound = Math.max(0, stats.mean - stats.stdDev);
                   const median = stats.median;
 
-                  // Show only our specific values
-                  if (index === 0) {
-                    return 'Low: ' + Math.round(lowerBound).toLocaleString('sv-SE');
-                  } else if (index === 1) {
-                    return 'Med: ' + Math.round(median).toLocaleString('sv-SE');
-                  } else if (index === 2) {
-                    return 'High: ' + Math.round(upperBound).toLocaleString('sv-SE');
+                  // Match value to determine label
+                  const formatted = Math.round(value).toLocaleString('sv-SE');
+                  if (Math.abs(value - lowerBound) < 1) {
+                    return 'Low: ' + formatted;
+                  } else if (Math.abs(value - median) < 1) {
+                    return 'Med: ' + formatted;
+                  } else if (Math.abs(value - upperBound) < 1) {
+                    return 'High: ' + formatted;
                   }
                   return '';
                 }
@@ -7527,7 +7540,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.55
+  v3.56
 </footer>
 
 </body>
