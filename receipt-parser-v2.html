@@ -1458,6 +1458,29 @@ function renderTrends(selectedYear = null) {
   // Generate data for previous year if comparison is enabled
   const previousYearData = showYearComparison ? getMonthlyData(selectedYear - 1) : null;
 
+  // v3.50: Calculate statistical values for bell curve visualization
+  const calculateStatistics = (data) => {
+    const values = data.map(m => m.totalSpent).filter(v => v > 0); // Only non-zero months
+    if (values.length === 0) return { mean: 0, median: 0, stdDev: 0 };
+
+    // Calculate mean
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+
+    // Calculate median
+    const sorted = [...values].sort((a, b) => a - b);
+    const median = sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+
+    // Calculate standard deviation
+    const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+    const stdDev = Math.sqrt(variance);
+
+    return { mean, median, stdDev };
+  };
+
+  const stats = calculateStatistics(monthlyData);
+
   const html = `
     <div class="analysis-section">
       <div class="section-header" onclick="toggleSection('trends-content')">
@@ -1541,9 +1564,57 @@ function renderTrends(selectedYear = null) {
       // Month names for labels
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-      // Build datasets array
-      const datasets = [
-        {
+      // Build datasets array (bell curve visualization first for background rendering)
+      const datasets = [];
+
+      // v3.50: Add ±1 standard deviation gradient area (subtle background)
+      if (stats.mean > 0 && stats.stdDev > 0) {
+        const upperBound = stats.mean + stats.stdDev;
+        const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+
+        datasets.push({
+          label: '±1 Std Dev Range',
+          data: Array(12).fill(upperBound),
+          borderColor: 'rgba(150, 150, 150, 0)',
+          backgroundColor: 'rgba(150, 150, 150, 0.08)',
+          fill: '+1', // Fill to next dataset
+          tension: 0,
+          borderWidth: 0,
+          pointRadius: 0,
+          order: 10 // Render in background
+        });
+
+        datasets.push({
+          label: 'Lower Bound',
+          data: Array(12).fill(lowerBound),
+          borderColor: 'rgba(150, 150, 150, 0)',
+          backgroundColor: 'rgba(255, 255, 255, 0)',
+          fill: false,
+          tension: 0,
+          borderWidth: 0,
+          pointRadius: 0,
+          order: 10 // Render in background
+        });
+      }
+
+      // v3.50: Add median line (subtle dashed line)
+      if (stats.median > 0) {
+        datasets.push({
+          label: `Median: ${stats.median.toLocaleString('sv-SE', {minimumFractionDigits: 0, maximumFractionDigits: 0})} kr`,
+          data: Array(12).fill(stats.median),
+          borderColor: 'rgba(100, 100, 100, 0.4)',
+          backgroundColor: 'rgba(0, 0, 0, 0)',
+          borderDash: [8, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+          order: 5 // Render between background and foreground
+        });
+      }
+
+      // Main data lines
+      datasets.push({
           label: `${selectedYear} Total Spent`,
           data: monthlyData.map(m => m.totalSpent),
           borderColor: '#667eea',
@@ -1551,9 +1622,11 @@ function renderTrends(selectedYear = null) {
           tension: 0.4,
           fill: true,
           borderWidth: 2,
-          monthlyData: monthlyData // Store reference for tooltip
-        },
-        {
+          monthlyData: monthlyData, // Store reference for tooltip
+          order: 1 // Render in foreground
+        });
+
+      datasets.push({
           label: `${selectedYear} Discounts Saved`,
           data: monthlyData.map(m => m.totalSaved),
           borderColor: '#28a745',
@@ -1561,9 +1634,9 @@ function renderTrends(selectedYear = null) {
           tension: 0.4,
           fill: true,
           borderWidth: 2,
-          monthlyData: monthlyData // Store reference for tooltip
-        }
-      ];
+          monthlyData: monthlyData, // Store reference for tooltip
+          order: 1 // Render in foreground
+        });
 
       // Add previous year datasets if comparison is enabled
       if (showYearComparison && previousYearData) {
@@ -1577,7 +1650,8 @@ function renderTrends(selectedYear = null) {
             fill: false,
             borderWidth: 2,
             borderDash: [5, 5],
-            monthlyData: previousYearData // Store reference for tooltip
+            monthlyData: previousYearData, // Store reference for tooltip
+            order: 2 // Render behind current year
           },
           {
             label: `${selectedYear - 1} Discounts Saved`,
@@ -1588,7 +1662,8 @@ function renderTrends(selectedYear = null) {
             fill: false,
             borderWidth: 2,
             borderDash: [5, 5],
-            monthlyData: previousYearData // Store reference for tooltip
+            monthlyData: previousYearData, // Store reference for tooltip
+            order: 2 // Render behind current year
           }
         );
       }
@@ -7412,7 +7487,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.49
+  v3.50
 </footer>
 
 </body>
