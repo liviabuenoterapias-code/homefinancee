@@ -510,8 +510,19 @@ function parseReceiptText(text, filename) {
       inScanSection = true;
     }
 
-    // End markers
-    if (inScanSection && (line.includes('slut') || line.includes('summa') || line.includes('totalt'))) {
+    // End markers - detect end of items section
+    // "Totalt X varor" indicates end of items (use as marker only, don't copy count)
+    if (line.match(/totalt\s+\d+\s+varor/)) {
+      endIndex = i;
+      break;
+    }
+    // "Mottaget Kontokort" or similar payment lines indicate end
+    if (line.match(/mottaget|betalt|visa\s+debit|mastercard/)) {
+      endIndex = i;
+      break;
+    }
+    // Original end markers with inScanSection
+    if (inScanSection && (line.includes('slut') || line.includes('summa'))) {
       endIndex = i;
       break;
     }
@@ -519,7 +530,21 @@ function parseReceiptText(text, filename) {
 
   // If no clear section found, try to parse the whole middle section
   if (startIndex === -1) {
-    startIndex = 5; // Skip header
+    // Find first separator line (--- or ===) after header
+    for (let i = 0; i < Math.min(10, lines.length); i++) {
+      if (lines[i].match(/^[-=]{4,}/)) {
+        startIndex = i + 1;
+        break;
+      }
+    }
+    // Fallback if no separator found
+    if (startIndex === -1) {
+      startIndex = 5; // Original fallback
+    }
+  }
+
+  // If endIndex wasn't set by markers, use conservative fallback
+  if (endIndex === lines.length) {
     endIndex = lines.length - 10; // Skip footer
   }
 
@@ -7586,7 +7611,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.58
+  v3.59
 </footer>
 
 </body>
