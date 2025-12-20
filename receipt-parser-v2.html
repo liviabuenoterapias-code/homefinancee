@@ -6283,22 +6283,37 @@ function generateSuggestions() {
   console.log(`📊 Weekly items found: ${weeklyDebug.filter(d => d.isWeekly).length} of ${weeklyDebug.length} items with weekly pattern`);
   console.log('Top weekly candidates:', weeklyDebug.sort((a, b) => b.frequency - a.frequency).slice(0, 10));
   console.log(`💡 Total suggestions before filtering: ${suggestions.length} (${suggestions.filter(s => s.isWeekly).length} weekly, ${suggestions.filter(s => !s.isWeekly).length} overdue staples)`);
+  console.log(`🔍 Dismissed items:`, Object.keys(dismissed));
+  console.log(`💤 Snoozed items:`, Object.keys(snoozed));
 
   // Filter out dismissed, snoozed, and items already in shopping list
+  const filterReasons = { dismissed: 0, snoozed: 0, inList: 0 };
   const filteredSuggestions = suggestions.filter(sug => {
     const key = sug.name.toLowerCase();
 
-    // Check if dismissed
-    if (dismissed[key]) return false;
+    // Check if dismissed - PRIORITY CHECK (dismissed items should NEVER appear)
+    if (dismissed[key]) {
+      filterReasons.dismissed++;
+      console.log(`🚫 Filtered out dismissed item: "${sug.name}"`);
+      return false;
+    }
 
     // Check if snoozed
     if (snoozed[key]) {
       const snoozedUntil = new Date(snoozed[key].snoozedUntil);
-      if (now < snoozedUntil) return false; // Still snoozed
+      if (now < snoozedUntil) {
+        filterReasons.snoozed++;
+        return false; // Still snoozed
+      } else {
+        console.log(`⏰ Snooze expired for: "${sug.name}" (expired ${Math.ceil((now - snoozedUntil) / (1000 * 60 * 60 * 24))} days ago)`);
+      }
     }
 
     // Check if already in list
-    if (currentListNames.has(key)) return false;
+    if (currentListNames.has(key)) {
+      filterReasons.inList++;
+      return false;
+    }
 
     return true;
   });
@@ -6313,7 +6328,7 @@ function generateSuggestions() {
   });
 
   const filtered = suggestions.length - filteredSuggestions.length;
-  console.log(`🔒 Filtered out ${filtered} items (dismissed: ${Object.keys(dismissed).length}, snoozed: ${Object.keys(snoozed).length}, already in list: ${currentListNames.size})`);
+  console.log(`🔒 Filtered out ${filtered} items: ${filterReasons.dismissed} dismissed, ${filterReasons.snoozed} snoozed, ${filterReasons.inList} in shopping list`);
   console.log(`✅ Final suggestions to display: ${filteredSuggestions.length}`);
 
   renderSuggestions(filteredSuggestions);
@@ -6430,9 +6445,18 @@ function dismissSuggestion(name) {
   };
   saveDismissedSuggestionsV3(dismissed);
 
+  // Remove from snoozed list if present (dismiss overrides snooze)
+  const snoozed = loadSnoozedSuggestions();
+  if (snoozed[name.toLowerCase()]) {
+    delete snoozed[name.toLowerCase()];
+    saveSnoozedSuggestions(snoozed);
+    console.log(`🔄 Removed "${name}" from snoozed list (dismissed takes priority)`);
+  }
+
   // Regenerate suggestions to remove dismissed one
   generateSuggestions();
   renderDismissedList();
+  renderSnoozedList();
   showMessage(`Dismissed "${name}"`, 'info');
 }
 
@@ -6461,9 +6485,24 @@ function restoreDismissedSuggestion(name) {
   delete dismissed[name.toLowerCase()];
   saveDismissedSuggestionsV3(dismissed);
 
+  // Check if item is still snoozed
+  const snoozed = loadSnoozedSuggestions();
+  const key = name.toLowerCase();
+  if (snoozed[key]) {
+    const snoozedUntil = new Date(snoozed[key].snoozedUntil);
+    const now = new Date();
+    if (now < snoozedUntil) {
+      const daysLeft = Math.ceil((snoozedUntil - now) / (1000 * 60 * 60 * 24));
+      showMessage(`Restored "${name}" (still snoozed for ${daysLeft} more day${daysLeft !== 1 ? 's' : ''})`, 'info');
+    } else {
+      showMessage(`Restored "${name}"`, 'success');
+    }
+  } else {
+    showMessage(`Restored "${name}"`, 'success');
+  }
+
   generateSuggestions();
   renderDismissedList();
-  showMessage(`Restored "${name}"`, 'success');
 }
 
 // v3.0: Un-snooze a suggestion
@@ -6472,9 +6511,17 @@ function unSnoozeSuggestion(name) {
   delete snoozed[name.toLowerCase()];
   saveSnoozedSuggestions(snoozed);
 
+  // Check if item is also dismissed
+  const dismissed = loadDismissedSuggestionsV3();
+  const key = name.toLowerCase();
+  if (dismissed[key]) {
+    showMessage(`Un-snoozed "${name}" (still dismissed - restore it from Dismissed Suggestions to see it again)`, 'info');
+  } else {
+    showMessage(`Un-snoozed "${name}"`, 'success');
+  }
+
   generateSuggestions();
   renderSnoozedList();
-  showMessage(`Un-snoozed "${name}"`, 'success');
 }
 
 // v3.0: Extend snooze by another 7 days
@@ -6960,7 +7007,7 @@ function clearAllSuggestions() {
   renderShoppingList();
 
   // Clear dismissed suggestions and regenerate
-  localStorage.removeItem('dismissedSuggestions');
+  localStorage.removeItem('dismissedSuggestions_v2');
 
   // Force immediate UI update with a slight delay to ensure shopping list renders first
   setTimeout(() => {
@@ -7539,7 +7586,7 @@ function confirmAddManualItem() {
 </script>
 
 <footer style="text-align: center; padding: 20px 10px; color: #999; font-size: 11px; border-top: 1px solid #eee; margin-top: 40px;">
-  v3.57
+  v3.58
 </footer>
 
 </body>
