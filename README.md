@@ -2,7 +2,9 @@
 
 A web-based PDF receipt parser specifically designed for Willys grocery store receipts (Swedish format).
 
-**Current Version:** v3.01 (2025-01-29)
+**Current Version:** v3.59 (2025-12-20)
+
+**Live App:** [https://liviabuenoterapias-code.github.io/homefinancee/receipt-parser-v2.html](https://liviabuenoterapias-code.github.io/homefinancee/receipt-parser-v2.html)
 
 ## 📚 Documentation
 
