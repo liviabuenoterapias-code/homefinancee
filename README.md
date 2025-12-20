@@ -256,6 +256,40 @@ Requires: ES6+ JavaScript, PDF.js library (loaded via CDN)
 - ⚠️ Data is stored in browser's localStorage only
 - ⚠️ Clear browser data to remove stored receipts
 
+## Development Workflow
+
+### Making Changes/Fixes
+
+**MANDATORY STEPS for every fix:**
+
+1. **Update version number** in the footer (`<footer>` tag near end of file)
+   - Increment the version (e.g., v3.58 → v3.59)
+   - Version format: `v{major}.{minor}`
+
+2. **Commit changes** with descriptive message
+   - Format: `v{version}: Brief description of fix`
+   - Example: `v3.59: Fix parser boundary detection for item section`
+   - Include details about what was fixed and why
+
+**Why this matters:**
+- Version tracking helps identify which fixes are deployed
+- Commit history provides audit trail of changes
+- Users can report issues with specific version numbers
+- Easier to rollback if a fix introduces new issues
+
+**Example workflow:**
+```bash
+# 1. Make your code changes
+# 2. Update version number in footer
+# 3. Commit
+git add receipt-parser-v2.html
+git commit -m "v3.59: Fix parser boundary detection for item section
+
+- Fix startIndex: Find first separator line instead of hardcoded line 5
+- Fix endIndex: Detect 'Totalt X varor' without requiring inScanSection flag
+- Prevents skipping items and including payment lines as items"
+```
+
 ## Future Improvements
 
 Possible enhancements:
