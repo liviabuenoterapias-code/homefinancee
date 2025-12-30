@@ -1,0 +1,7283 @@
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let allReceipts = [];
+let receiptsVersion = 0; // Increment when receipts change to invalidate caches
+let cachedSuggestions = null; // Cache for shopping list suggestions
+
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('groceryReceipts_v2');
+  if (saved) {
+    allReceipts = JSON.parse(saved);
+    if (allReceipts.length > 0) {
+      displayAllReceipts();
+
+      // v3.0: Generate suggestions after receipts are loaded
+      generateSuggestions();
+      renderDismissedList();
+      renderSnoozedList();
+    }
+  }
+});
+
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files).filter(f => f.type === 'application/pdf');
+  if (files.length === 0) {
+    showMessage('Please upload PDF files only', 'error');
+    return;
+  }
+
+  document.getElementById('progress').style.display = 'block';
+  document.getElementById('progressBar').style.width = '0%';
+
+  for (let i = 0; i < files.length; i++) {
+    document.getElementById('progressText').textContent = `Processing ${i + 1} of ${files.length}...`;
+    document.getElementById('progressBar').style.width = `${((i + 1) / files.length) * 100}%`;
+
+    await processPDF(files[i]);
+  }
+
+  document.getElementById('progress').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+
+  saveReceipts();
+  displayAllReceipts();
+  showMessage(`Successfully processed ${files.length} receipt(s)!`, 'success');
+});
+
+async function processPDF(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      // Add page break marker between pages
+      if (pageNum > 1) {
+        fullText += '\n';
+      }
+
+      let lastY = null;
+      let lastX = null;
+      textContent.items.forEach(item => {
+        const x = item.transform[4];
+        const y = item.transform[5];
+
+        // Detect new line: Y coordinate changed OR X jumped back to left margin
+        if (lastY !== null) {
+          const yDiff = Math.abs(y - lastY);
+          const xJumpedBack = lastX !== null && x < lastX - 50; // X moved significantly left
+
+          if (yDiff > 2 || xJumpedBack) {
+            fullText += '\n';
+          }
+        }
+
+        fullText += item.str + ' ';
+        lastY = y;
+        lastX = x;
+      });
+    }
+
+    const receipt = parseReceiptText(fullText, file.name);
+
+    // Check if we already have this receipt (by date/time/total)
+    const exists = allReceipts.find(r =>
+      r.date === receipt.date &&
+      r.time === receipt.time &&
+      Math.abs(r.totalAmount - receipt.totalAmount) < 0.01
+    );
+
+    if (!exists) {
+      allReceipts.push(receipt);
+    } else {
+      console.log('Duplicate receipt detected, skipping');
+    }
+
+  } catch (error) {
+    console.error('Error processing', file.name, ':', error);
+  }
+}
+
+function parseReceiptText(text, filename) {
+  const receipt = {
+    id: Date.now() + Math.random(),
+    filename: filename,
+    store: '',
+    date: '',
+    time: '',
+    items: [],
+    totalAmount: 0,
+    totalDiscount: 0,
+    debugInfo: [] // For debugging
+  };
+
+  // Decode HTML entities before processing
+  text = text.replace(/gt;/g, '>');
+  text = text.replace(/lt;/g, '<');
+  text = text.replace(/amp;/g, '&');
+  text = text.replace(/quot;/g, '"');
+  text = text.replace(/apos;/g, "'");
+  text = text.replace(/#37;/g, '%');
+  text = text.replace(/&#37;/g, '%');
+
+  const lines = text.split('\n').map(l => l.trim());
+
+  // Extract store - look for Willys store name (not discount lines)
+  for (let line of lines) {
+    const lower = line.toLowerCase();
+    // Match "Willys" but NOT "Willys Plus:" (discount line)
+    if (lower.includes('willys') && !lower.includes('willys plus:') && !lower.includes('rabatt')) {
+      receipt.store = line;
+      break;
+    }
+  }
+  if (!receipt.store) {
+    // Fallback to first substantial line
+    for (let line of lines) {
+      if (line && !line.includes('---') && !line.includes('===') && line.length > 2 && line.length < 50) {
+        receipt.store = line;
+        break;
+      }
+    }
+  }
+
+  // Extract date - various formats
+  const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) receipt.date = dateMatch[1];
+
+  // Extract time
+  const timeMatch = text.match(/(\d{2}:\d{2})/);
+  if (timeMatch) receipt.time = timeMatch[1];
+
+  // Extract total - more flexible and robust
+  // Try multiple patterns for total
+  let totalMatch = text.match(/Totalt[:\s]+([\d\s]+)[,]([\d]{2})\s*(?:SEK|kr)/i);
+  if (totalMatch) {
+    // Format: "Totalt 1 234,56 SEK" -> extract as "1234.56"
+    const wholePart = totalMatch[1].replace(/\s/g, '');
+    const decimalPart = totalMatch[2];
+    receipt.totalAmount = parseFloat(wholePart + '.' + decimalPart);
+  } else {
+    // Fallback: simpler pattern
+    totalMatch = text.match(/Totalt\s+([\d,\s]+)\s*(?:SEK|kr)?/i);
+    if (totalMatch) {
+      receipt.totalAmount = parseFloat(totalMatch[1].replace(',', '.').replace(/\s/g, ''));
+    }
+  }
+
+  // Parse items - IMPROVED SECTION DETECTION
+  let inScanSection = false;
+  let startIndex = -1;
+  let endIndex = lines.length;
+
+  // Find start and end markers more flexibly
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+
+    // Start markers
+    if (line.includes('start') && (line.includes('sj') || line.includes('scanning'))) {
+      startIndex = i + 1;
+      inScanSection = true;
+    }
+
+    // End markers - detect end of items section
+    // "Totalt X varor" indicates end of items (use as marker only, don't copy count)
+    if (line.match(/totalt\s+\d+\s+varor/)) {
+      endIndex = i;
+      break;
+    }
+    // "Mottaget Kontokort" or similar payment lines indicate end
+    if (line.match(/mottaget|betalt|visa\s+debit|mastercard/)) {
+      endIndex = i;
+      break;
+    }
+    // Original end markers with inScanSection
+    if (inScanSection && (line.includes('slut') || line.includes('summa'))) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  // If no clear section found, try to parse the whole middle section
+  if (startIndex === -1) {
+    // Find first separator line (--- or ===) after header
+    for (let i = 0; i < Math.min(10, lines.length); i++) {
+      if (lines[i].match(/^[-=]{4,}/)) {
+        startIndex = i + 1;
+        break;
+      }
+    }
+    // Fallback if no separator found
+    if (startIndex === -1) {
+      startIndex = 5; // Original fallback
+    }
+  }
+
+  // If endIndex wasn't set by markers, use conservative fallback
+  if (endIndex === lines.length) {
+    endIndex = lines.length - 10; // Skip footer
+  }
+
+  let lastItem = null;
+  const debugMode = document.getElementById('debugMode')?.checked || false;
+
+  // IMPROVED ITEM MATCHING - Multiple patterns
+  for (let i = startIndex; i < endIndex; i++) {
+    const line = lines[i];
+    if (!line || line.length < 3) continue;
+
+    let matched = false;
+    let pattern = '';
+
+    // Skip obvious non-item lines
+    if (line.match(/^(=+|-+|Kvitto\b|Butik\b|Datum\b|Tid\b|Kassa\b|Org\b)/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (header/separator)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for "Nytt pris" - can be discount or just price change
+    if (line.match(/Nytt pris/i)) {
+      const discountMatch = line.match(/-([\d,]+)/);
+      if (discountMatch && lastItem) {
+        // Has negative amount = discount
+        const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
+        lastItem.discount += discount;
+        receipt.totalDiscount += discount;
+        matched = true;
+        pattern = 'Discount (Nytt pris)';
+      } else {
+        // No negative amount = just price change notification, skip it
+        pattern = 'Skipped (price change)';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // Skip standalone "Willys Plus:" lines (discount header)
+    if (line.trim() === 'Willys Plus:') {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (discount header)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for discount/coupon lines FIRST
+    if (line.match(/rabatt|neds|willys\s*plus:|nedsättning|kupong:/i)) {
+      const discountMatch = line.match(/-([\d,]+)/);
+      if (discountMatch && lastItem) {
+        const discount = parseFloat(discountMatch[1].replace(',', '.').replace(/\s/g, ''));
+        lastItem.discount += discount;
+        receipt.totalDiscount += discount;
+        matched = true;
+        pattern = 'Discount';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // Skip payment/card lines (use word boundaries to avoid matching "GRATULATIONSKORT")
+    if (line.match(/\b(betalt|kort|swish|kontant)\b|kort\s*nr/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (payment)', startIndex, endIndex });
+      continue;
+    }
+
+    // Check for PANT (bottle deposit) - add to previous item, don't create new item
+    if (line.match(/^\+PANT/i)) {
+      const pantMatch = line.match(/^\+PANT.*?\s+([\d,]+)\s*$/i);
+      if (pantMatch && lastItem) {
+        const pantAmount = parseFloat(pantMatch[1].replace(',', '.'));
+        lastItem.totalPrice += pantAmount;
+        // Update unit price if quantity > 1
+        if (lastItem.quantity > 1) {
+          lastItem.unitPrice = lastItem.totalPrice / lastItem.quantity;
+        } else {
+          lastItem.unitPrice = lastItem.totalPrice;
+        }
+        matched = true;
+        pattern = 'PANT (added to previous item)';
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 1A: Simplified format for products with quantity - NAME QTYst*PRICE TOTAL
+    // Handles: GRATULATIONSKORT 2st*27,90 55,80, BRIOCHE SESAM 2st*21,90 43,80
+    // Very explicit pattern to catch simple quantity items
+    // Space between name and quantity is optional (\s*) to handle PDFs with no space
+    itemMatch = line.match(/^(.*?\S)\s*(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+
+      // Only accept if name doesn't contain numbers (to avoid matching size info)
+      if (!name.match(/\d/)) {
+        const qty = parseInt(itemMatch[2]);
+        const unitPrice = parseFloat(itemMatch[3].replace(',', '.'));
+        const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+        lastItem = {
+          name: name,
+          quantity: qty,
+          unitPrice: unitPrice,
+          totalPrice: totalPrice,
+          discount: 0
+        };
+        receipt.items.push(lastItem);
+        matched = true;
+        pattern = 'Pattern 1A (Simple Qty*Price)';
+        if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+        continue;
+      } else {
+        // Name has digits, log and fall through to Pattern 1
+        if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Pattern 1A rejected (has digits)', startIndex, endIndex });
+      }
+    }
+
+    // PATTERN 1: Standard format with quantity - NAME [SIZE] QTYst*PRICE TOTAL
+    // Supports: JUICE 1.75L 2st*34,90 69,80, BIG KIDS +6 ÅR 2st*20,90 41,80, ROAST`N TOAST 800G, etc.
+    itemMatch = line.match(/^(.*?\S)\s+(?:[\d,.]+[A-Z]+\s+)?(\d+)\s*st\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const qty = parseInt(itemMatch[2]);
+      const unitPrice = parseFloat(itemMatch[3].replace(',', '.'));
+      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+      lastItem = {
+        name: name,
+        quantity: qty,
+        unitPrice: unitPrice,
+        totalPrice: totalPrice,
+        discount: 0
+      };
+      receipt.items.push(lastItem);
+      matched = true;
+      pattern = 'Pattern 1 (Qty*Price)';
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 2: Weight-based items - NAME WEIGHT*PRICEPERKILO TOTAL
+    // Check weight patterns BEFORE simple pattern to capture kg prices
+    itemMatch = line.match(/^(.*?\S)\s+([\d,]+)\s*(?:kg|g)?\s*\*\s*([\d,]+)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const weight = parseFloat(itemMatch[2].replace(',', '.'));
+      const pricePerKg = parseFloat(itemMatch[3].replace(',', '.'));
+      const totalPrice = parseFloat(itemMatch[4].replace(',', '.'));
+
+      lastItem = {
+        name: name,
+        quantity: 1,
+        unitPrice: totalPrice,
+        totalPrice: totalPrice,
+        discount: 0,
+        weight: weight,
+        pricePerKg: pricePerKg,
+        isWeightBased: true
+      };
+      receipt.items.push(lastItem);
+      matched = true;
+      pattern = 'Pattern 2 (Weight)';
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+      continue;
+    }
+
+    // PATTERN 3: Weight info on separate line - check next line (or next 2 lines for 3-line format)
+    // Matches: "PRÄST MELLAN" followed by "0,732kg*134,90kr/kg 98,75"
+    // OR: "GOUDA 28%" + "Willys Plus:" + "1,217kg*85,90kr/kg 104,54"
+    if (i + 1 < endIndex) {
+      let nextLine = lines[i + 1];
+      let weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+
+      // Check if next line is "Willys Plus:" and weight info is on i+2
+      let skipLines = 1;
+      if (!weightLineMatch && i + 2 < endIndex && nextLine?.trim() === 'Willys Plus:') {
+        nextLine = lines[i + 2];
+        weightLineMatch = nextLine?.match(/^([\d,]+)\s*kg\s*\*\s*([\d,]+)\s*kr\/kg\s+([\d,]+)\s*$/i);
+        skipLines = 2;
+      }
+
+      if (weightLineMatch && line.match(/^[^\d]+$/i)) {
+        const name = line.trim();
+        const weight = parseFloat(weightLineMatch[1].replace(',', '.'));
+        const pricePerKg = parseFloat(weightLineMatch[2].replace(',', '.'));
+        const totalPrice = parseFloat(weightLineMatch[3].replace(',', '.'));
+
+        lastItem = {
+          name: name,
+          quantity: 1,
+          unitPrice: totalPrice,
+          totalPrice: totalPrice,
+          discount: 0,
+          weight: weight,
+          pricePerKg: pricePerKg,
+          isWeightBased: true
+        };
+        receipt.items.push(lastItem);
+        matched = true;
+        pattern = skipLines === 2 ? 'Pattern 3 (3-line weight)' : 'Pattern 3 (Multi-line weight)';
+        if (debugMode) {
+          receipt.debugInfo.push({ lineNum: i, line, matched, pattern, startIndex, endIndex });
+          if (skipLines === 2) {
+            receipt.debugInfo.push({ lineNum: i + 1, line: lines[i + 1], matched: true, pattern: 'Pattern 3 (discount header)', startIndex, endIndex });
+          }
+          receipt.debugInfo.push({ lineNum: i + skipLines, line: nextLine, matched: true, pattern: 'Pattern 3 (weight line)', startIndex, endIndex });
+        }
+        i += skipLines; // Skip the consumed lines
+        continue;
+      }
+    }
+
+    // PATTERN 4: Simple format - NAME PRICE (no quantity)
+    // Checked AFTER weight patterns so kg prices are captured first
+    // Supports: +PANT ENG PET <=1L 1,00, FISH & CRISP 55,80, ROAST`N TOAST 800G 32,90, ÄPPLE (without weight info), etc.
+    itemMatch = line.match(/^(.*?\S)\s+([\d,]+)\s*$/i);
+
+    if (itemMatch) {
+      const name = itemMatch[1].trim();
+      const price = parseFloat(itemMatch[2].replace(',', '.'));
+
+      // Validate: name should be at least 3 chars, price should be reasonable (0.01 to 9999)
+      if (name.length >= 3 && price >= 0.01 && price <= 9999) {
+        // Skip if it looks like a total/sum line
+        if (!name.match(/^(totalt|summa|att\s*betala|moms|subtotal)/i)) {
+          lastItem = {
+            name: name,
+            quantity: 1,
+            unitPrice: price,
+            totalPrice: price,
+            discount: 0
+          };
+          receipt.items.push(lastItem);
+          matched = true;
+          pattern = 'Pattern 4 (Simple)';
+        } else {
+          pattern = 'Skipped (total line)';
+        }
+      } else {
+        pattern = `Failed validation (len:${name.length}, price:${price})`;
+      }
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched, pattern, name, price, startIndex, endIndex });
+      continue;
+    } else {
+      // Debug: Pattern 4 didn't match at all
+      if (debugMode && line.includes('ALCOHOL')) {
+        receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Pattern 4 NO REGEX MATCH', lineChars: [...line].map(c => c.charCodeAt(0)), startIndex, endIndex });
+      }
+    }
+
+    // PATTERN 5: Just weight line (continuation from previous)
+    // Skip if it looks like a weight continuation line
+    if (line.match(/^[\d,]+\s*kg\s*\*\s*[\d,]+\s*kr\/kg\s+[\d,]+\s*$/i)) {
+      if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'Skipped (weight continuation)', startIndex, endIndex });
+      continue;
+    }
+
+    // No pattern matched
+    if (debugMode) receipt.debugInfo.push({ lineNum: i, line, matched: false, pattern: 'No pattern matched', startIndex, endIndex });
+  }
+
+  // Enrich items with productType and storeSection from library history
+  enrichItemsFromLibrary(receipt);
+
+  return receipt;
+}
+
+// Enrich receipt items with productType and storeSection from library
+function enrichItemsFromLibrary(receipt) {
+  const customMappings = loadCustomMappings();
+
+  receipt.items.forEach(item => {
+    // Check if we have custom mapping for this exact product name
+    const mapping = customMappings[item.name];
+
+    if (mapping) {
+      // Apply productType if available in library
+      if (mapping.productType) {
+        item.productType = mapping.productType;
+      }
+
+      // Apply storeSection if available in library
+      if (mapping.storeSection) {
+        item.storeSection = mapping.storeSection;
+      }
+    }
+  });
+}
+
+function displayAllReceipts() {
+  if (allReceipts.length === 0) {
+    document.getElementById('stats').style.display = 'none';
+    document.getElementById('receipts').innerHTML = '';
+    return;
+  }
+
+  // Sort by date/time (newest first)
+  allReceipts.sort((a, b) => {
+    const dateA = new Date(a.date + ' ' + a.time);
+    const dateB = new Date(b.date + ' ' + b.time);
+    return dateB - dateA;
+  });
+
+  // Update stats
+  const totalProducts = allReceipts.reduce((sum, r) => sum + r.items.length, 0);
+  const totalItems = allReceipts.reduce((sum, r) => {
+    return sum + r.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+  }, 0);
+  const totalSpent = allReceipts.reduce((sum, r) => sum + r.totalAmount, 0);
+  const totalSaved = allReceipts.reduce((sum, r) => sum + r.totalDiscount, 0);
+
+  document.getElementById('statReceipts').textContent = allReceipts.length;
+  document.getElementById('statItems').textContent = `${totalProducts} (${totalItems})`;
+  document.getElementById('statSpent').textContent = totalSpent.toFixed(0) + ' kr';
+  document.getElementById('statSaved').textContent = totalSaved.toFixed(0) + ' kr';
+  document.getElementById('stats').style.display = 'block';
+
+  // Display receipts
+  const container = document.getElementById('receipts');
+
+  // PERFORMANCE: Load custom mappings ONCE, not inside the loop
+  const customMappings = loadCustomMappings();
+
+  container.innerHTML = allReceipts.map((receipt, index) => {
+    // Calculate total items (sum of quantities)
+    const totalItemCount = receipt.items.reduce((sum, item) => sum + item.quantity, 0);
+    const productCount = receipt.items.length;
+
+    return `
+    <div class="receipt-card">
+      <div class="receipt-header" onclick="toggleReceiptContent(${index}, event)">
+        <div class="receipt-info">
+          <div class="receipt-date">
+            <span class="receipt-collapse-indicator collapsed" id="collapse-indicator-${index}">▼</span>
+            ${receipt.date} ${receipt.time}
+          </div>
+          <div class="receipt-store">Med ${receipt.store} har du sparat: ${receipt.totalDiscount.toFixed(2)} • ${productCount} products (${totalItemCount} items)</div>
+        </div>
+        <div class="receipt-total">${receipt.totalAmount.toFixed(2)} kr</div>
+        <button class="btn btn-delete" onclick="event.stopPropagation(); deleteReceipt(${index})">🗑️ Delete</button>
+      </div>
+
+      <div class="receipt-content collapsed" id="receipt-content-${index}">
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th style="width: 50%">Item Name (editable)</th>
+            <th style="width: 10%">Qty</th>
+            <th style="width: 15%">Unit Price</th>
+            <th style="width: 15%">Total</th>
+            <th style="width: 10%">Discount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${receipt.items.map((item, itemIndex) => {
+            // Get the mapped product name
+            const customData = customMappings[item.name];
+            let productName;
+            if (customData?.productName) {
+              productName = customData.productName;
+            } else if (customData?.shoppingListName) {
+              productName = customData.shoppingListName;
+            } else {
+              const brand = customData?.brand || extractBrand(item.name);
+              const cleaned = cleanProductName(item.name, brand);
+              productName = suggestShoppingListName(cleaned);
+            }
+            const standardName = window.ProductCategories.standardizeProduct(item.name);
+
+            return `
+            <tr>
+              <td>
+                <input type="text" value="${item.name}" onchange="updateItemName(${index}, ${itemIndex}, this.value)" style="width: 100%; margin-bottom: 4px;">
+                <div style="font-size: 11px; color: #666; display: flex; gap: 8px; flex-wrap: wrap;">
+                  <span title="Product name from auto-suggestion">📝 ${productName}</span>
+                  ${standardName !== item.name && standardName !== productName ? `<span title="Standardized name from PRODUCT_MAPPING">🔗 ${standardName}</span>` : ''}
+                </div>
+              </td>
+              <td style="text-align: center;">${item.quantity}</td>
+              <td style="text-align: right;">${item.unitPrice.toFixed(2)}</td>
+              <td style="text-align: right;">${item.totalPrice.toFixed(2)}</td>
+              <td style="text-align: right;">${item.discount > 0 ? '-' + item.discount.toFixed(2) : '0.00'}</td>
+            </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      ${receipt.debugInfo && receipt.debugInfo.length > 0 ? `
+        <details style="margin-top: 15px; background: #fff3cd; padding: 15px; border-radius: 5px;">
+          <summary style="cursor: pointer; font-weight: bold; color: #856404;">🐛 Debug Info (click to expand)</summary>
+          <div style="margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;">
+            <div><strong>Section:</strong> Lines ${receipt.debugInfo[0]?.startIndex} to ${receipt.debugInfo[0]?.endIndex}</div>
+            ${receipt.debugInfo.map(info => `
+              <div style="margin-top: 5px; padding: 5px; background: ${info.matched ? '#d4edda' : '#f8d7da'};">
+                <strong>Line ${info.lineNum}:</strong> "${info.line}"
+                ${info.matched ? '✓ Matched as: ' + info.pattern : '✗ No match' + (info.pattern ? ' (' + info.pattern + ')' : '')}
+              </div>
+            `).join('')}
+          </div>
+        </details>
+      ` : ''}
+      </div>
+    </div>
+  `;
+  }).join('');
+}
+
+function updateItemName(receiptIndex, itemIndex, newName) {
+  allReceipts[receiptIndex].items[itemIndex].name = newName;
+  saveReceipts();
+}
+
+function deleteReceipt(index) {
+  if (confirm('Delete this receipt?')) {
+    allReceipts.splice(index, 1);
+    saveReceipts();
+    displayAllReceipts();
+    showMessage('Receipt deleted', 'info');
+  }
+}
+
+function toggleReceiptContent(index, event) {
+  // Don't toggle if clicking the delete button
+  if (event && event.target.closest('.btn-delete')) {
+    return;
+  }
+
+  const content = document.getElementById(`receipt-content-${index}`);
+  const indicator = document.getElementById(`collapse-indicator-${index}`);
+
+  if (content.classList.contains('collapsed')) {
+    content.classList.remove('collapsed');
+    indicator.classList.remove('collapsed');
+  } else {
+    content.classList.add('collapsed');
+    indicator.classList.add('collapsed');
+  }
+}
+
+function clearAll() {
+  if (confirm('Delete ALL receipts? This cannot be undone!')) {
+    allReceipts = [];
+    saveReceipts();
+    displayAllReceipts();
+    showMessage('All receipts cleared', 'info');
+  }
+}
+
+function saveReceipts() {
+  localStorage.setItem('groceryReceipts_v2', JSON.stringify(allReceipts));
+  receiptsVersion++; // Increment version to invalidate all caches
+  invalidateProductLibraryCache(); // Clear cache when receipts change
+  analysisInstance = null; // Clear analysis cache
+  cachedSuggestions = null; // Clear suggestions cache
+}
+
+function exportToCSV() {
+  if (allReceipts.length === 0) {
+    showMessage('No receipts to export', 'error');
+    return;
+  }
+
+  let csv = 'Receipt ID,Store,Date,Time,Item Name,Quantity,Unit Price,Total Price,Discount,Receipt Total,Receipt Total Discount\n';
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      csv += `"${receipt.id}","${receipt.store}","${receipt.date}","${receipt.time}",`;
+      csv += `"${item.name}",${item.quantity},${item.unitPrice.toFixed(2)},${item.totalPrice.toFixed(2)},${item.discount.toFixed(2)},`;
+      csv += `${receipt.totalAmount.toFixed(2)},${receipt.totalDiscount.toFixed(2)}\n`;
+    });
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+
+  link.href = url;
+  link.download = `grocery_receipts_${new Date().toISOString().split('T')[0]}.csv`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  showMessage('CSV exported successfully!', 'success');
+}
+
+function showMessage(msg, type) {
+  const div = document.getElementById('statusMsg');
+  div.className = 'msg ' + type;
+  div.textContent = msg;
+  div.style.display = 'block';
+
+  setTimeout(() => {
+    div.style.display = 'none';
+  }, 5000);
+}
+
+// Tab switching function
+function switchTab(tabName) {
+  // Hide all tabs
+  document.querySelectorAll('.tab-content').forEach(tab => {
+    tab.classList.remove('active');
+  });
+
+  // Remove active from all tab buttons
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.classList.remove('active');
+  });
+
+  // Show selected tab
+  document.getElementById(tabName + '-tab').classList.add('active');
+
+  // Activate button
+  event.target.classList.add('active');
+
+  // If switching to analysis, refresh it
+  if (tabName === 'analysis') {
+    refreshAnalysis();
+  }
+
+  // If switching to products, refresh product library
+  if (tabName === 'products') {
+    if (allReceipts.length > 0) {
+      renderProductLibrary();
+    }
+  }
+
+  // If switching to shopping list, refresh suggestions and list
+  if (tabName === 'shopping-list') {
+    if (allReceipts.length > 0) {
+      generateSuggestions();
+      renderShoppingList();
+    }
+  }
+}
+
+// Analysis functions
+let analysisInstance = null;
+let analysisVersion = -1; // Track which version of receipts was analyzed
+let modalNavigationContext = null; // Track where we came from (e.g., {type: 'tag', tag: 'coffee'})
+
+function refreshAnalysis() {
+  if (!allReceipts || allReceipts.length === 0) {
+    document.getElementById('analysis-content').innerHTML = `
+      <div style="text-align: center; padding: 60px 20px; color: #999;">
+        <div style="font-size: 64px; margin-bottom: 20px;">📊</div>
+        <h2>No Data Yet</h2>
+        <p style="margin-top: 10px;">Upload some receipts in the Parse tab first!</p>
+      </div>
+    `;
+    return;
+  }
+
+  // PERFORMANCE: Only create new analysis instance if receipts changed
+  if (!analysisInstance || analysisVersion !== receiptsVersion) {
+    analysisInstance = new GroceryAnalysis(allReceipts);
+    analysisVersion = receiptsVersion;
+  }
+  const summary = analysisInstance.getSummaryStats();
+
+  document.getElementById('analysis-content').innerHTML = `
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value">${summary.receiptCount}</div>
+        <div class="stat-label">Receipts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${summary.productCount}</div>
+        <div class="stat-label">Unique Products</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${summary.totalSpent.toFixed(0)} kr</div>
+        <div class="stat-label">Total Spent</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${summary.totalSaved.toFixed(0)} kr</div>
+        <div class="stat-label">Total Saved</div>
+      </div>
+    </div>
+
+    <div style="text-align: center; margin: 20px 0; color: #666;">
+      <p><strong>Period:</strong> ${summary.dateRange.start} to ${summary.dateRange.end} (${summary.monthCount} months)</p>
+    </div>
+
+    <div id="trends-section"></div>
+    <div id="yoy-trips-section"></div>
+    <div id="tag-filter-section"></div>
+    <div id="staples-section"></div>
+    <div id="categories-section"></div>
+    <div id="discounts-section"></div>
+  `;
+
+  renderTrends();
+  renderYoYTrips();
+  renderTagFilter();
+  renderStaples();
+  renderCategories();
+  renderDiscounts();
+}
+
+// Get all unique tags from all products
+// Load master tag list (tags created but not yet used)
+function loadMasterTags() {
+  const saved = localStorage.getItem('masterTagList');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save master tag list
+function saveMasterTags(tags) {
+  localStorage.setItem('masterTagList', JSON.stringify(tags));
+}
+
+// Get all tags (both used on products AND master tag list)
+function getAllTags() {
+  const customMappings = loadCustomMappings();
+  const masterTags = loadMasterTags();
+  const allTags = new Set(masterTags); // Start with master tags
+
+  // Add tags that are actually used on products
+  Object.values(customMappings).forEach(mapping => {
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => allTags.add(tag));
+    }
+  });
+
+  return Array.from(allTags).sort();
+}
+
+// Show products with a specific tag
+function showProductsByTag(tag) {
+  try {
+    if (!analysisInstance) {
+      alert('ERROR: Analysis data not loaded. Please go to Analysis tab first.');
+      return;
+    }
+
+    const customMappings = loadCustomMappings();
+
+    // Find all RAW NAMES with this tag
+    const taggedRawNames = new Set();
+    const debugInfo = {
+      totalTagged: 0,
+      foundInReceipts: 0,
+      notFoundInReceipts: []
+    };
+
+    Object.entries(customMappings).forEach(([rawName, mapping]) => {
+      if (mapping.tags && mapping.tags.includes(tag)) {
+        debugInfo.totalTagged++;
+        taggedRawNames.add(rawName);
+      }
+    });
+
+    if (taggedRawNames.size === 0) {
+      alert(`No products are tagged with "${tag}".`);
+      return;
+    }
+
+    // Get purchases but ONLY from receipts where the raw name matches a tagged name
+    const productGroups = {};
+
+    allReceipts.forEach(receipt => {
+      if (!receipt.items || !receipt.date) return;
+
+      receipt.items.forEach(item => {
+        // Only process items whose raw name has the selected tag
+        if (!taggedRawNames.has(item.name)) return;
+
+        // Get standardized product name
+        const standardName = window.ProductCategories.standardizeProduct(item.name);
+        const mapping = customMappings[item.name] || {};
+        const productName = mapping.productName || standardName;
+        const category = window.ProductCategories.getCategory(standardName, item.name);
+
+        if (!productGroups[productName]) {
+          productGroups[productName] = {
+            name: productName,
+            category: category,
+            purchases: [],
+            totalQuantity: 0,
+            totalSpent: 0,
+            totalDiscount: 0
+          };
+        }
+
+        productGroups[productName].purchases.push({
+          date: receipt.date,
+          quantity: item.quantity,
+          totalPrice: item.totalPrice,
+          discount: item.discount
+        });
+        productGroups[productName].totalQuantity += item.quantity;
+        productGroups[productName].totalSpent += item.totalPrice;
+        productGroups[productName].totalDiscount += item.discount;
+      });
+    });
+
+    if (Object.keys(productGroups).length === 0) {
+      const taggedList = Array.from(taggedRawNames).map(r => `  • ${r}`).join('\n');
+      alert(`No receipts found with tag "${tag}".\n\n${taggedRawNames.size} products are tagged with "${tag}":\n${taggedList}\n\nThese products haven't been purchased yet or their receipts haven't been uploaded.`);
+      return;
+    }
+
+    // Convert to array and add purchase count
+    const productsData = Object.values(productGroups).map(group => ({
+      ...group,
+      purchases: group.purchases.length
+    }));
+
+  console.log('Final productsData:', productsData);
+
+  // Sort by total spent
+  productsData.sort((a, b) => b.totalSpent - a.totalSpent);
+
+  // Calculate totals
+  const totalSpent = productsData.reduce((sum, p) => sum + p.totalSpent, 0);
+  const totalQuantity = productsData.reduce((sum, p) => sum + p.totalQuantity, 0);
+  const totalDiscount = productsData.reduce((sum, p) => sum + p.totalDiscount, 0);
+
+  // Display in modal
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🏷️ Products tagged with "${tag}"</h2>
+    <p style="color: #666; margin-bottom: 20px;">${productsData.length} products found</p>
+
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL QUANTITY</div>
+        <div style="font-size: 24px; font-weight: bold;">${totalQuantity}</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL SPENT</div>
+        <div style="font-size: 24px; font-weight: bold; color: #667eea;">${totalSpent.toFixed(2)} kr</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">TOTAL SAVED</div>
+        <div style="font-size: 24px; font-weight: bold; color: #28a745;">${totalDiscount.toFixed(2)} kr</div>
+      </div>
+    </div>
+
+    <div style="max-height: 400px; overflow-y: auto;">
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Product Type</th>
+            <th>Total Qty</th>
+            <th>Total Spent</th>
+            <th>Purchases</th>
+            <th>Discounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${productsData.map(p => `
+            <tr style="cursor: pointer;" onclick="showProductDetailFromTag('${p.name.replace(/'/g, "\\'")}', '${tag}')">
+              <td><strong>${p.name}</strong></td>
+              <td>${p.category}</td>
+              <td>${p.totalQuantity}</td>
+              <td>${p.totalSpent.toFixed(2)} kr</td>
+              <td>${p.purchases} times</td>
+              <td style="color: ${p.totalDiscount > 0 ? '#28a745' : '#999'};">
+                ${p.totalDiscount > 0 ? '-' + p.totalDiscount.toFixed(2) + ' kr' : 'None'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+  } catch (error) {
+    alert('ERROR in showProductsByTag: ' + error.message);
+    console.error('Error in showProductsByTag:', error);
+  }
+}
+
+// Render tag filter section
+function renderTagFilter() {
+  const tags = getAllTags();
+
+  if (tags.length === 0) {
+    document.getElementById('tag-filter-section').innerHTML = '';
+    return;
+  }
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('tag-filter-content')">
+        <span class="section-title">🏷️ Filter by Tags</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="tag-filter-content" class="section-content">
+        <p style="margin-bottom: 15px; color: #666;">Search and select a tag to see all products with that tag</p>
+        <div style="position: relative; max-width: 400px;">
+          <input
+            type="text"
+            id="tagFilterSearch"
+            placeholder="Type to search tags..."
+            autocomplete="off"
+            style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+          />
+          <div id="tagDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #667eea; border-top: none; border-radius: 0 0 6px 6px; max-height: 300px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+            ${tags.map(tag => `
+              <div
+                class="tag-dropdown-item"
+                data-tag="${tag.replace(/"/g, '&quot;')}"
+                style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0;"
+              >
+                ${tag}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('tag-filter-section').innerHTML = html;
+
+  // Attach event listeners after HTML is created
+  const searchInput = document.getElementById('tagFilterSearch');
+  const dropdown = document.getElementById('tagDropdown');
+
+  if (searchInput && dropdown) {
+    // Show dropdown on focus
+    searchInput.addEventListener('focus', () => {
+      dropdown.style.display = 'block';
+    });
+
+    // Filter tags as user types
+    searchInput.addEventListener('input', () => {
+      const searchTerm = searchInput.value.toLowerCase();
+      const items = dropdown.querySelectorAll('.tag-dropdown-item');
+
+      let visibleCount = 0;
+      items.forEach(item => {
+        const tag = item.getAttribute('data-tag').toLowerCase();
+        if (tag.includes(searchTerm)) {
+          item.style.display = 'block';
+          visibleCount++;
+        } else {
+          item.style.display = 'none';
+        }
+      });
+
+      dropdown.style.display = visibleCount > 0 ? 'block' : 'none';
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.style.display = 'none';
+      }
+    });
+
+    // Handle tag selection
+    dropdown.querySelectorAll('.tag-dropdown-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent blur
+        const tag = item.getAttribute('data-tag');
+        searchInput.value = tag;
+        dropdown.style.display = 'none';
+        showProductsByTag(tag);
+      });
+
+      // Hover effects
+      item.addEventListener('mouseover', () => {
+        item.style.background = '#f5f7ff';
+      });
+      item.addEventListener('mouseout', () => {
+        item.style.background = 'white';
+      });
+    });
+  }
+}
+
+// Old dropdown functions removed - replaced with working dropdown below
+
+// Track current selected year for trends
+let currentTrendsYear = null;
+let showYearComparison = false;
+
+function renderTrends(selectedYear = null) {
+  // Get all available years from the data
+  const allMonths = Object.keys(analysisInstance.processed.months);
+  const availableYears = [...new Set(allMonths.map(m => parseInt(m.substring(0, 4))))].sort((a, b) => b - a);
+
+  // If no year selected, use the most recent year with data, or current year
+  if (!selectedYear) {
+    selectedYear = currentTrendsYear || availableYears[0] || new Date().getFullYear();
+  }
+  currentTrendsYear = selectedYear;
+
+  // Helper function to calculate monthly data for a given year
+  const getMonthlyData = (year) => {
+    const data = [];
+    for (let month = 1; month <= 12; month++) {
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const purchases = analysisInstance.processed.months[monthKey] || [];
+      const totalSaved = purchases.reduce((sum, p) => sum + p.discount, 0);
+      const itemCount = purchases.reduce((sum, p) => sum + p.quantity, 0);
+
+      // Get receipts for this month and calculate total from receipts (matches YoY calculation)
+      const monthReceipts = allReceipts.filter(receipt => {
+        if (!receipt.date) return false;
+        return receipt.date.startsWith(monthKey);
+      });
+
+      const tripCount = monthReceipts.length;
+      const totalSpent = monthReceipts.reduce((sum, r) => sum + r.totalAmount, 0);
+      const avgPerTrip = tripCount > 0 ? totalSpent / tripCount : 0;
+
+      data.push({
+        month: monthKey,
+        totalSpent,
+        totalSaved,
+        itemCount,
+        uniqueProducts: purchases.length > 0 ? new Set(purchases.map(p => p.standardName)).size : 0,
+        tripCount,
+        avgPerTrip
+      });
+    }
+    return data;
+  };
+
+  // Generate data for current year
+  const monthlyData = getMonthlyData(selectedYear);
+
+  // Generate data for previous year if comparison is enabled
+  const previousYearData = showYearComparison ? getMonthlyData(selectedYear - 1) : null;
+
+  // v3.50: Calculate statistical values for bell curve visualization
+  const calculateStatistics = (data) => {
+    const values = data.map(m => m.totalSpent).filter(v => v > 0); // Only non-zero months
+    if (values.length === 0) return { mean: 0, median: 0, stdDev: 0 };
+
+    // Calculate mean
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+
+    // Calculate median
+    const sorted = [...values].sort((a, b) => a - b);
+    const median = sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+
+    // Calculate standard deviation
+    const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+    const stdDev = Math.sqrt(variance);
+
+    return { mean, median, stdDev };
+  };
+
+  const stats = calculateStatistics(monthlyData);
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('trends-content')">
+        <span class="section-title">📈 Spending & Price Trends</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="trends-content" class="section-content">
+
+        <!-- Year Navigation -->
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <button onclick="renderTrends(${selectedYear - 1})"
+                  style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+            ← ${selectedYear - 1}
+          </button>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <h3 style="margin: 0; font-size: 18px; color: #333;">
+              Year: ${selectedYear}
+            </h3>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #666; cursor: pointer;">
+              <input type="checkbox" id="yearComparisonToggle" ${showYearComparison ? 'checked' : ''}
+                     onchange="showYearComparison = this.checked; renderTrends();"
+                     style="cursor: pointer;">
+              Compare with ${selectedYear - 1}
+            </label>
+          </div>
+          <button onclick="renderTrends(${selectedYear + 1})"
+                  style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+            ${selectedYear + 1} →
+          </button>
+        </div>
+
+        <!-- Monthly Spending Chart -->
+        <h3 style="margin-bottom: 15px;">Monthly Spending Overview</h3>
+        <div class="chart-container" style="height: 300px;">
+          <canvas id="monthlySpendingChart"></canvas>
+        </div>
+
+        <!-- Monthly Stats Table -->
+        <table class="analysis-table" style="margin-top: 20px;">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Total Spent</th>
+              <th>Discounts</th>
+              <th>Trips</th>
+              <th>Avg per Trip</th>
+              <th>Items Purchased</th>
+              <th>Unique Products</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${monthlyData.map(m => `
+              <tr>
+                <td><strong>${m.month}</strong></td>
+                <td>${m.totalSpent.toFixed(2)} kr</td>
+                <td style="color: #28a745;">-${m.totalSaved.toFixed(2)} kr</td>
+                <td>${m.tripCount}</td>
+                <td>${m.avgPerTrip.toFixed(2)} kr</td>
+                <td>${m.itemCount}</td>
+                <td>${m.uniqueProducts}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('trends-section').innerHTML = html;
+
+  // Create monthly spending chart
+  setTimeout(() => {
+    const ctx = document.getElementById('monthlySpendingChart');
+    if (ctx) {
+      // Destroy existing chart if it exists to avoid duplication
+      if (window.monthlySpendingChartInstance) {
+        window.monthlySpendingChartInstance.destroy();
+      }
+
+      // Month names for labels
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      // Build datasets array (bell curve visualization first for background rendering)
+      const datasets = [];
+
+      // v3.54: Add ±1 standard deviation gradient area (warm orange for visibility)
+      if (stats.mean > 0 && stats.stdDev > 0) {
+        const upperBound = stats.mean + stats.stdDev;
+        const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+
+        datasets.push({
+          label: '±1 Std Dev Range',
+          data: Array(12).fill(upperBound),
+          borderColor: 'rgba(255, 130, 70, 0)',
+          backgroundColor: 'rgba(255, 130, 70, 0.15)',
+          fill: '+1', // Fill to next dataset
+          tension: 0,
+          borderWidth: 0,
+          pointRadius: 0,
+          order: 10 // Render in background
+        });
+
+        datasets.push({
+          label: 'Lower Bound',
+          data: Array(12).fill(lowerBound),
+          borderColor: 'rgba(255, 130, 70, 0)',
+          backgroundColor: 'rgba(255, 255, 255, 0)',
+          fill: false,
+          tension: 0,
+          borderWidth: 0,
+          pointRadius: 0,
+          order: 10 // Render in background
+        });
+      }
+
+      // v3.54: Add median line (warm orange to complement gradient)
+      if (stats.median > 0) {
+        datasets.push({
+          label: 'Median',
+          data: Array(12).fill(stats.median),
+          borderColor: 'rgba(255, 130, 70, 0.6)',
+          backgroundColor: 'rgba(0, 0, 0, 0)',
+          borderDash: [8, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+          order: 5 // Render between background and foreground
+        });
+      }
+
+      // Main data lines
+      datasets.push({
+          label: `${selectedYear} Total Spent`,
+          data: monthlyData.map(m => m.totalSpent),
+          borderColor: '#667eea',
+          backgroundColor: 'rgba(102, 126, 234, 0.1)',
+          tension: 0.4,
+          fill: true,
+          borderWidth: 2,
+          monthlyData: monthlyData, // Store reference for tooltip
+          order: 1 // Render in foreground
+        });
+
+      datasets.push({
+          label: `${selectedYear} Discounts Saved`,
+          data: monthlyData.map(m => m.totalSaved),
+          borderColor: '#28a745',
+          backgroundColor: 'rgba(40, 167, 69, 0.1)',
+          tension: 0.4,
+          fill: true,
+          borderWidth: 2,
+          monthlyData: monthlyData, // Store reference for tooltip
+          order: 1 // Render in foreground
+        });
+
+      // Add previous year datasets if comparison is enabled
+      if (showYearComparison && previousYearData) {
+        datasets.push(
+          {
+            label: `${selectedYear - 1} Total Spent`,
+            data: previousYearData.map(m => m.totalSpent),
+            borderColor: 'rgba(102, 126, 234, 0.5)',
+            backgroundColor: 'rgba(102, 126, 234, 0.05)',
+            tension: 0.4,
+            fill: false,
+            borderWidth: 2,
+            borderDash: [5, 5],
+            monthlyData: previousYearData, // Store reference for tooltip
+            order: 2 // Render behind current year
+          },
+          {
+            label: `${selectedYear - 1} Discounts Saved`,
+            data: previousYearData.map(m => m.totalSaved),
+            borderColor: 'rgba(40, 167, 69, 0.5)',
+            backgroundColor: 'rgba(40, 167, 69, 0.05)',
+            tension: 0.4,
+            fill: false,
+            borderWidth: 2,
+            borderDash: [5, 5],
+            monthlyData: previousYearData, // Store reference for tooltip
+            order: 2 // Render behind current year
+          }
+        );
+      }
+
+      window.monthlySpendingChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: monthNames,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                filter: function(legendItem, chartData) {
+                  // Hide statistical datasets from legend
+                  const label = legendItem.text;
+                  return label !== '±1 Std Dev Range' && label !== 'Lower Bound' && label !== 'Median';
+                }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const datasetMonthlyData = context.dataset.monthlyData;
+                  const monthIndex = context.dataIndex;
+                  const monthData = datasetMonthlyData[monthIndex];
+
+                  // Format the value with thousand separator
+                  const formatNumber = (num) => {
+                    return num.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  };
+
+                  // Build tooltip lines
+                  const lines = [
+                    context.dataset.label + ': ' + formatNumber(context.parsed.y) + ' kr'
+                  ];
+
+                  // Only add trip info for "Total Spent" datasets (not for "Discounts Saved")
+                  if (context.dataset.label.includes('Total Spent')) {
+                    lines.push('Number of trips: ' + monthData.tripCount);
+                    if (monthData.tripCount > 0) {
+                      lines.push('Average per trip: ' + formatNumber(monthData.avgPerTrip) + ' kr');
+                    }
+                  }
+
+                  return lines;
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              position: 'left',
+              ticks: {
+                callback: function(value) {
+                  return value + ' kr';
+                }
+              }
+            },
+            y2: {
+              type: 'linear',
+              display: true,
+              position: 'right',
+              beginAtZero: true,
+              grid: {
+                drawOnChartArea: false // Don't draw grid lines from this axis
+              },
+              min: 0,
+              max: function(context) {
+                return context.chart.scales.y.max; // Match left axis
+              },
+              afterBuildTicks: function(axis) {
+                // Position ticks at exact statistical values
+                const upperBound = stats.mean + stats.stdDev;
+                const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+                const median = stats.median;
+
+                // Override with our custom tick positions
+                axis.ticks = [
+                  { value: lowerBound },
+                  { value: median },
+                  { value: upperBound }
+                ];
+              },
+              ticks: {
+                callback: function(value, index, ticks) {
+                  // Calculate our three key values
+                  const upperBound = stats.mean + stats.stdDev;
+                  const lowerBound = Math.max(0, stats.mean - stats.stdDev);
+                  const median = stats.median;
+
+                  // Match value to determine label
+                  const formatted = Math.round(value).toLocaleString('sv-SE');
+                  if (Math.abs(value - lowerBound) < 1) {
+                    return 'Low: ' + formatted;
+                  } else if (Math.abs(value - median) < 1) {
+                    return 'Med: ' + formatted;
+                  } else if (Math.abs(value - upperBound) < 1) {
+                    return 'High: ' + formatted;
+                  }
+                  return '';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+  }, 100);
+}
+
+// Sorting and pagination state for staples table
+let staplesSortConfig = {
+  column: 'totalSpent',  // Default sort by total spent
+  direction: 'desc'
+};
+
+let staplesPaginationConfig = {
+  currentPage: 1,
+  itemsPerPage: 25
+};
+
+let discountsPaginationConfig = {
+  currentPage: 1,
+  itemsPerPage: 25
+};
+
+let discountsSortConfig = {
+  column: 'discountRate',  // Default sort by discount rate
+  direction: 'desc'
+};
+
+function sortStaples(column) {
+  // Toggle direction if clicking the same column, otherwise default to desc
+  if (staplesSortConfig.column === column) {
+    staplesSortConfig.direction = staplesSortConfig.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    staplesSortConfig.column = column;
+    staplesSortConfig.direction = 'desc';
+  }
+  staplesPaginationConfig.currentPage = 1; // Reset to first page when sorting
+  renderStaples();
+}
+
+function changeStaplesPage(page) {
+  staplesPaginationConfig.currentPage = page;
+  renderStaples();
+}
+
+function changeDiscountsPage(page) {
+  discountsPaginationConfig.currentPage = page;
+  renderDiscounts();
+}
+
+function sortDiscounts(column) {
+  // Toggle direction if clicking the same column, otherwise default to desc
+  if (discountsSortConfig.column === column) {
+    discountsSortConfig.direction = discountsSortConfig.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    discountsSortConfig.column = column;
+    discountsSortConfig.direction = 'desc';
+  }
+  discountsPaginationConfig.currentPage = 1; // Reset to first page when sorting
+  renderDiscounts();
+}
+
+function renderStaples() {
+  const staples = analysisInstance.getStapleProducts(0.5);  // Lower threshold to show more products
+
+  // Sort the staples based on current config
+  const sortedStaples = [...staples].sort((a, b) => {
+    let aVal, bVal;
+
+    switch (staplesSortConfig.column) {
+      case 'name':
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+        return staplesSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'category':
+        aVal = a.category.toLowerCase();
+        bVal = b.category.toLowerCase();
+        return staplesSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'frequency':
+        aVal = a.frequency;
+        bVal = b.frequency;
+        break;
+      case 'totalQuantity':
+        aVal = a.totalQuantity;
+        bVal = b.totalQuantity;
+        break;
+      case 'totalSpent':
+        aVal = a.totalSpent;
+        bVal = b.totalSpent;
+        break;
+      case 'avgPrice':
+        aVal = a.avgPrice;
+        bVal = b.avgPrice;
+        break;
+      case 'totalSavings':
+        aVal = a.totalSavings;
+        bVal = b.totalSavings;
+        break;
+      default:
+        return 0;
+    }
+
+    return staplesSortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+
+  // Helper function to render sort indicator
+  const sortIndicator = (column) => {
+    if (staplesSortConfig.column === column) {
+      return staplesSortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return '';
+  };
+
+  // Pre-build tag lookup map to avoid rebuilding product library multiple times
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const tagLookupMap = {};
+
+  // Build tag map once
+  sortedStaples.forEach(item => {
+    const allTags = new Set();
+    const matchingProducts = productLibrary.filter(p => p.standardName === item.name);
+    matchingProducts.forEach(product => {
+      const mapping = customMappings[product.rawName];
+      if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+        mapping.tags.forEach(tag => allTags.add(tag));
+      }
+    });
+    tagLookupMap[item.name] = Array.from(allTags).sort();
+  });
+
+  // Pagination
+  const totalItems = sortedStaples.length;
+  const totalPages = Math.ceil(totalItems / staplesPaginationConfig.itemsPerPage);
+  const startIndex = (staplesPaginationConfig.currentPage - 1) * staplesPaginationConfig.itemsPerPage;
+  const endIndex = startIndex + staplesPaginationConfig.itemsPerPage;
+  const paginatedStaples = sortedStaples.slice(startIndex, endIndex);
+
+  // Build pagination controls
+  const paginationHtml = totalPages > 1 ? `
+    <div style="margin-top: 15px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <button onclick="changeStaplesPage(${staplesPaginationConfig.currentPage - 1})"
+              ${staplesPaginationConfig.currentPage === 1 ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        ← Previous
+      </button>
+      <span style="color: #666;">
+        Page ${staplesPaginationConfig.currentPage} of ${totalPages} (${totalItems} items)
+      </span>
+      <button onclick="changeStaplesPage(${staplesPaginationConfig.currentPage + 1})"
+              ${staplesPaginationConfig.currentPage === totalPages ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        Next →
+      </button>
+    </div>
+  ` : `<p style="margin-top: 10px; text-align: center; color: #666;">${totalItems} staple products</p>`;
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('staples-content')">
+        <span class="section-title">🛒 Staple Products (Purchased Regularly)</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="staples-content" class="section-content">
+        <p style="margin-bottom: 15px; color: #666;">Products purchased in ${sortedStaples.length > 0 ? sortedStaples[0].totalMonths : 0} months</p>
+
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th class="sortable" onclick="sortStaples('name')">Product${sortIndicator('name')}</th>
+              <th class="sortable" onclick="sortStaples('category')">Product Type${sortIndicator('category')}</th>
+              <th class="sortable" onclick="sortStaples('frequency')">Frequency${sortIndicator('frequency')}</th>
+              <th class="sortable" onclick="sortStaples('totalQuantity')">Total Units${sortIndicator('totalQuantity')}</th>
+              <th class="sortable" onclick="sortStaples('totalSpent')">Total Spent${sortIndicator('totalSpent')}</th>
+              <th class="sortable" onclick="sortStaples('avgPrice')">Avg Price${sortIndicator('avgPrice')}</th>
+              <th class="sortable" onclick="sortStaples('totalSavings')">Total Saved${sortIndicator('totalSavings')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paginatedStaples.map(item => {
+              const tags = tagLookupMap[item.name] || [];
+              return `
+              <tr onclick="showProductDetail('${item.name.replace(/'/g, "\\'")}')">
+                <td>
+                  <strong>${item.name}</strong>
+                  ${tags.length > 0 ? `<br><div style="margin-top: 4px;">${tags.map(tag =>
+                    `<span style="background: #e8f5e9; color: #2e7d32; padding: 2px 6px; border-radius: 8px; font-size: 10px; margin-right: 4px;">🏷️ ${tag}</span>`
+                  ).join('')}</div>` : ''}
+                </td>
+                <td>${item.category}</td>
+                <td>${item.frequency}/${item.totalMonths}</td>
+                <td>${item.totalQuantity}</td>
+                <td><strong>${item.totalSpent.toFixed(2)} kr</strong></td>
+                <td>${item.avgPrice.toFixed(2)} kr</td>
+                <td style="color: #28a745;">${item.totalSavings > 0 ? '-' + item.totalSavings.toFixed(2) : '0.00'} kr</td>
+              </tr>
+            `}).join('')}
+          </tbody>
+        </table>
+
+        ${paginationHtml}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('staples-section').innerHTML = html;
+}
+
+function renderCategories() {
+  const spending = analysisInstance.getCategorySpending();
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('categories-content')">
+        <span class="section-title">📊 Product Type Spending</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="categories-content" class="section-content">
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+
+        <table class="analysis-table" style="margin-top: 20px;">
+          <thead>
+            <tr>
+              <th>Product Type</th>
+              <th>Total Spent</th>
+              <th>Percentage</th>
+              <th>Items</th>
+              <th>Unique Products</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${spending.map(cat => `
+              <tr>
+                <td><strong>${cat.category}</strong></td>
+                <td>${cat.totalSpent.toFixed(2)} kr</td>
+                <td>${cat.percentage.toFixed(1)}%</td>
+                <td>${cat.itemCount}</td>
+                <td>${cat.uniqueProducts}</td>
+                <td>
+                  <button class="btn" style="padding: 4px 12px; font-size: 12px;" onclick="showCategoryDetails('${cat.category}')">
+                    View Products
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <div id="category-details" style="margin-top: 30px;"></div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('categories-section').innerHTML = html;
+
+  // Create pie chart with click handler
+  setTimeout(() => {
+    const ctx = document.getElementById('categoryChart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: spending.map(c => c.category),
+          datasets: [{
+            data: spending.map(c => c.totalSpent),
+            backgroundColor: [
+              '#667eea', '#764ba2', '#f093fb', '#4facfe',
+              '#43e97b', '#fa709a', '#fee140', '#30cfd0',
+              '#a8edea', '#fed6e3', '#ffeaa7', '#dfe6e9'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right'
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.label + ': ' + context.parsed.toFixed(2) + ' kr (' +
+                         spending[context.dataIndex].percentage.toFixed(1) + '%)';
+                }
+              }
+            }
+          },
+          onClick: (event, elements) => {
+            if (elements.length > 0) {
+              const index = elements[0].index;
+              const category = spending[index].category;
+              showCategoryDetails(category);
+            }
+          }
+        }
+      });
+    }
+  }, 100);
+}
+
+function renderDiscounts() {
+  const analysis = analysisInstance.getDiscountAnalysis();
+
+  // Get all discounted products (not just top 20)
+  const allDiscounted = analysisInstance.processed ?
+    Object.entries(analysisInstance.processed.products)
+      .map(([name, purchases]) => {
+        const totalDiscount = purchases.reduce((sum, p) => sum + p.discount, 0);
+        const timesOnSale = purchases.filter(p => p.discount > 0).length;
+        const avgDiscount = timesOnSale > 0 ? totalDiscount / timesOnSale : 0;
+        const discountRate = purchases.length > 0 ? (timesOnSale / purchases.length) * 100 : 0;
+
+        return {
+          name,
+          category: purchases[0].category,
+          totalSaved: totalDiscount,
+          timesOnSale,
+          totalPurchases: purchases.length,
+          discountRate,
+          avgDiscount
+        };
+      })
+      .filter(p => p.totalSaved > 0)
+    : [];
+
+  // Sort the discounts based on current config
+  const sortedDiscounts = [...allDiscounted].sort((a, b) => {
+    let aVal, bVal;
+
+    switch (discountsSortConfig.column) {
+      case 'name':
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+        return discountsSortConfig.direction === 'asc' ?
+          aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      case 'totalSaved':
+        aVal = a.totalSaved;
+        bVal = b.totalSaved;
+        break;
+      case 'timesOnSale':
+        aVal = a.timesOnSale;
+        bVal = b.timesOnSale;
+        break;
+      case 'discountRate':
+        aVal = a.discountRate;
+        bVal = b.discountRate;
+        break;
+      default:
+        return 0;
+    }
+
+    return discountsSortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+
+  // Helper function to render sort indicator
+  const sortIndicator = (column) => {
+    if (discountsSortConfig.column === column) {
+      return discountsSortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return '';
+  };
+
+  // Pagination
+  const totalItems = sortedDiscounts.length;
+  const totalPages = Math.ceil(totalItems / discountsPaginationConfig.itemsPerPage);
+  const startIndex = (discountsPaginationConfig.currentPage - 1) * discountsPaginationConfig.itemsPerPage;
+  const endIndex = startIndex + discountsPaginationConfig.itemsPerPage;
+  const paginatedDiscounts = sortedDiscounts.slice(startIndex, endIndex);
+
+  // Build pagination controls
+  const paginationHtml = totalPages > 1 ? `
+    <div style="margin-top: 15px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <button onclick="changeDiscountsPage(${discountsPaginationConfig.currentPage - 1})"
+              ${discountsPaginationConfig.currentPage === 1 ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        ← Previous
+      </button>
+      <span style="color: #666;">
+        Page ${discountsPaginationConfig.currentPage} of ${totalPages} (${totalItems} items)
+      </span>
+      <button onclick="changeDiscountsPage(${discountsPaginationConfig.currentPage + 1})"
+              ${discountsPaginationConfig.currentPage === totalPages ? 'disabled' : ''}
+              class="btn" style="padding: 6px 12px;">
+        Next →
+      </button>
+    </div>
+  ` : `<p style="margin-top: 10px; text-align: center; color: #666;">${totalItems} discounted products</p>`;
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('discounts-content')">
+        <span class="section-title">💰 Discounts & Savings</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="discounts-content" class="section-content">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+          <div class="insight-card">
+            <div><span class="insight-icon">💰</span>Total Saved</div>
+            <div style="font-size: 28px; font-weight: bold; margin-top: 10px;">${analysis.totalSavings.toFixed(2)} kr</div>
+          </div>
+          <div class="insight-card">
+            <div><span class="insight-icon">📊</span>Avg Per Receipt</div>
+            <div style="font-size: 28px; font-weight: bold; margin-top: 10px;">${analysis.avgPerReceipt.toFixed(2)} kr</div>
+          </div>
+          <div class="insight-card">
+            <div><span class="insight-icon">📈</span>Savings Rate</div>
+            <div style="font-size: 28px; font-weight: bold; margin-top: 10px;">${analysis.savingsRate.toFixed(1)}%</div>
+          </div>
+        </div>
+
+        <h3 style="margin: 20px 0 10px 0;">Discounted Products</h3>
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th class="sortable" onclick="sortDiscounts('name')">Product${sortIndicator('name')}</th>
+              <th class="sortable" onclick="sortDiscounts('totalSaved')">Total Saved${sortIndicator('totalSaved')}</th>
+              <th class="sortable" onclick="sortDiscounts('timesOnSale')">Times On Sale${sortIndicator('timesOnSale')}</th>
+              <th class="sortable" onclick="sortDiscounts('discountRate')">Discount Rate${sortIndicator('discountRate')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paginatedDiscounts.map(item => `
+              <tr>
+                <td><strong>${item.name}</strong></td>
+                <td style="color: #28a745;">${item.totalSaved.toFixed(2)} kr</td>
+                <td>${item.timesOnSale}/${item.totalPurchases}</td>
+                <td><strong>${item.discountRate.toFixed(0)}%</strong></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        ${paginationHtml}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('discounts-section').innerHTML = html;
+}
+
+// Global variable to track the current viewing period for YoY Trips chart
+let yoyTripsStartMonth = null;
+
+function renderYoYTrips() {
+  // Helper function to get ISO week number
+  const getWeekNumber = (dateString) => {
+    const date = new Date(dateString);
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  };
+
+  // Calculate trip data grouped by month
+  const tripsByMonth = {};
+
+  allReceipts.forEach(receipt => {
+    if (!receipt.date) return;
+
+    // Parse date (format: YYYY-MM-DD)
+    const dateParts = receipt.date.split('-');
+    if (dateParts.length < 2) return;
+
+    const year = parseInt(dateParts[0]);
+    const month = parseInt(dateParts[1]);
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+
+    if (!tripsByMonth[monthKey]) {
+      tripsByMonth[monthKey] = {
+        totalSpent: 0,
+        tripCount: 0,
+        year: year,
+        month: month,
+        weeks: new Set() // Track distinct weeks with shopping activity
+      };
+    }
+
+    tripsByMonth[monthKey].totalSpent += receipt.totalAmount;
+    tripsByMonth[monthKey].tripCount += 1;
+
+    // Add the week number to track distinct weeks
+    const weekNum = getWeekNumber(receipt.date);
+    tripsByMonth[monthKey].weeks.add(weekNum);
+  });
+
+  // Calculate average per week for each month
+  Object.keys(tripsByMonth).forEach(key => {
+    const data = tripsByMonth[key];
+    const weekCount = data.weeks.size;
+    data.weekCount = weekCount;
+    data.avgPerWeek = weekCount > 0 ? data.totalSpent / weekCount : 0;
+  });
+
+  // Get all month keys sorted
+  const allMonthKeys = Object.keys(tripsByMonth).sort();
+
+  // If no start month set, default to most recent 12 months
+  if (!yoyTripsStartMonth && allMonthKeys.length > 0) {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1; // 0-indexed
+
+    // Calculate start month (12 months ago)
+    let startYear = currentYear;
+    let startMonth = currentMonth - 11;
+    if (startMonth <= 0) {
+      startMonth += 12;
+      startYear -= 1;
+    }
+
+    yoyTripsStartMonth = `${startYear}-${String(startMonth).padStart(2, '0')}`;
+  }
+
+  // Generate the 12 consecutive months for display
+  const displayMonths = [];
+  if (yoyTripsStartMonth) {
+    const [startYear, startMonth] = yoyTripsStartMonth.split('-').map(Number);
+
+    for (let i = 0; i < 12; i++) {
+      let year = startYear;
+      let month = startMonth + i;
+
+      if (month > 12) {
+        year += Math.floor((month - 1) / 12);
+        month = ((month - 1) % 12) + 1;
+      }
+
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      displayMonths.push({
+        monthKey,
+        year,
+        month,
+        currentYearData: tripsByMonth[monthKey] || null,
+        previousYearData: tripsByMonth[`${year - 1}-${String(month).padStart(2, '0')}`] || null
+      });
+    }
+  }
+
+  // Format labels and data for chart
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const labels = displayMonths.map(m => {
+    const monthName = monthNames[m.month - 1];
+    const yearShort = String(m.year).slice(-2);
+    const data = m.currentYearData;
+    if (data) {
+      return `${monthName} '${yearShort} (${data.weekCount}w, ${data.tripCount}t)`;
+    }
+    return `${monthName} '${yearShort}`;
+  });
+
+  const currentYearData = displayMonths.map(m =>
+    m.currentYearData ? m.currentYearData.avgPerWeek : 0
+  );
+
+  const previousYearData = displayMonths.map(m =>
+    m.previousYearData ? m.previousYearData.avgPerWeek : 0
+  );
+
+  // Get period display text
+  const periodStart = displayMonths[0];
+  const periodEnd = displayMonths[11];
+  const periodText = `${monthNames[periodStart.month - 1]} ${periodStart.year} - ${monthNames[periodEnd.month - 1]} ${periodEnd.year}`;
+
+  const html = `
+    <div class="analysis-section">
+      <div class="section-header" onclick="toggleSection('yoy-trips-content')">
+        <span class="section-title">📊 Year-over-Year Shopping Trips Comparison</span>
+        <span style="font-size: 20px;">▼</span>
+      </div>
+      <div id="yoy-trips-content" class="section-content">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <button class="btn" onclick="scrollYoYTrips(-1)" style="padding: 8px 16px;">
+            ← Previous
+          </button>
+          <div style="font-weight: bold; font-size: 16px; color: #667eea;">
+            ${periodText}
+          </div>
+          <button class="btn" onclick="scrollYoYTrips(1)" style="padding: 8px 16px;">
+            Next →
+          </button>
+        </div>
+
+        <div class="chart-container" style="height: 400px;">
+          <canvas id="yoyTripsChart"></canvas>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center; color: #666; font-size: 14px;">
+          <p><strong>Average weekly spend</strong> - Compare current year vs previous year</p>
+          <p style="font-size: 12px; color: #999;">Weekly normalization eliminates distortion from variable trip sizes while showing trip frequency for context</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('yoy-trips-section').innerHTML = html;
+
+  // Create the chart
+  setTimeout(() => {
+    const ctx = document.getElementById('yoyTripsChart');
+    if (ctx) {
+      // Destroy existing chart if it exists
+      if (window.yoyTripsChartInstance) {
+        window.yoyTripsChartInstance.destroy();
+      }
+
+      window.yoyTripsChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Previous Year',
+              data: previousYearData,
+              backgroundColor: '#f093fb',
+              borderColor: '#f093fb',
+              borderWidth: 1
+            },
+            {
+              label: 'Current Year',
+              data: currentYearData,
+              backgroundColor: '#667eea',
+              borderColor: '#667eea',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top'
+            },
+            tooltip: {
+              callbacks: {
+                title: function(context) {
+                  const monthData = displayMonths[context[0].dataIndex];
+                  const isPreviousYear = context[0].datasetIndex === 0;
+                  const year = isPreviousYear ? monthData.year - 1 : monthData.year;
+                  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                  const monthName = monthNames[monthData.month - 1];
+                  const yearShort = String(year).slice(-2);
+                  return `${monthName} '${yearShort}`;
+                },
+                label: function(context) {
+                  const monthData = displayMonths[context.dataIndex];
+                  const isPreviousYear = context.datasetIndex === 0;
+                  const data = isPreviousYear ? monthData.previousYearData : monthData.currentYearData;
+
+                  if (!data) {
+                    return context.dataset.label + ': No activity';
+                  }
+
+                  return [
+                    context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' kr/week',
+                    'Total spent: ' + data.totalSpent.toFixed(2) + ' kr',
+                    'Number of weeks: ' + data.weekCount,
+                    'Number of trips: ' + data.tripCount
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Average Weekly Spend (kr)'
+              },
+              ticks: {
+                callback: function(value) {
+                  return value.toFixed(0) + ' kr';
+                }
+              }
+            },
+            x: {
+              title: {
+                display: true,
+                text: 'Month (Weeks with Activity, Trip Count)'
+              }
+            }
+          }
+        }
+      });
+    }
+  }, 100);
+}
+
+function scrollYoYTrips(direction) {
+  if (!yoyTripsStartMonth) return;
+
+  const [year, month] = yoyTripsStartMonth.split('-').map(Number);
+
+  let newMonth = month + direction;
+  let newYear = year;
+
+  if (newMonth > 12) {
+    newMonth = 1;
+    newYear += 1;
+  } else if (newMonth < 1) {
+    newMonth = 12;
+    newYear -= 1;
+  }
+
+  yoyTripsStartMonth = `${newYear}-${String(newMonth).padStart(2, '0')}`;
+  renderYoYTrips();
+}
+
+function toggleSection(id) {
+  const content = document.getElementById(id);
+  if (content.style.display === 'none') {
+    content.style.display = 'block';
+  } else {
+    content.style.display = 'none';
+  }
+}
+
+function showProductDetail(productName) {
+  const history = analysisInstance.getPriceHistory(productName);
+  if (!history) return;
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  const stats = history.statistics;
+
+  // Check if this is a weight-based product
+  const isWeightBased = history.purchases.some(p => p.weight && p.pricePerKg);
+
+  let trend = '📊 Stable';
+  if (stats.priceChange > 5) trend = '📈 Increasing';
+  else if (stats.priceChange < -5) trend = '📉 Decreasing';
+
+  // Calculate weight-based statistics if applicable
+  let weightStats = null;
+  let bestPriceDate = null;
+  if (isWeightBased) {
+    const weightPrices = history.purchases.filter(p => p.pricePerKg).map(p => p.pricePerKg);
+    const avgKgPrice = weightPrices.reduce((a, b) => a + b, 0) / weightPrices.length;
+    const minKgPrice = Math.min(...weightPrices);
+    const latestKgPrice = weightPrices[weightPrices.length - 1];
+
+    // Find best price purchase
+    const bestPurchase = history.purchases.reduce((best, current) => {
+      if (!current.pricePerKg) return best;
+      if (!best || current.pricePerKg < best.pricePerKg) return current;
+      return best;
+    }, null);
+    bestPriceDate = bestPurchase?.date;
+
+    weightStats = {
+      min: minKgPrice,
+      max: Math.max(...weightPrices),
+      avg: avgKgPrice,
+      latest: latestKgPrice,
+      change: ((weightPrices[weightPrices.length - 1] - weightPrices[0]) / weightPrices[0] * 100),
+      currentVsAvg: ((latestKgPrice - avgKgPrice) / avgKgPrice * 100)
+    };
+  }
+
+  // Get all available categories for dropdown
+  const allCategories = getAllCategories();
+
+  // Get current tags for this product
+  const currentTags = getProductTags(productName);
+
+  // Get all existing tags for autocomplete suggestions
+  const allExistingTags = getAllTags();
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    ${modalNavigationContext && modalNavigationContext.type === 'tag' ? `
+      <button
+        onclick="showProductsByTag('${modalNavigationContext.tag}')"
+        class="btn"
+        style="margin-bottom: 15px; padding: 8px 16px; font-size: 13px; background: #6c757d;">
+        ← Back to "${modalNavigationContext.tag}" products
+      </button>
+    ` : ''}
+    <h2>${productName}</h2>
+    <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+      <span style="color: #666;">Product Type:</span>
+      <select
+        id="product-category-select"
+        onchange="updateProductCategory('${productName.replace(/'/g, "\\'")}', this.value)"
+        style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; background: white; cursor: pointer;">
+        ${allCategories.map(cat => `
+          <option value="${cat}" ${cat === history.category ? 'selected' : ''}>${cat}</option>
+        `).join('')}
+      </select>
+      ${isWeightBased ? '<span style="color: #666;">⚖️ Sold by weight</span>' : ''}
+    </div>
+
+    <div style="margin-bottom: 20px; background: #f9f9f9; padding: 15px; border-radius: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <span style="color: #666; font-weight: bold;">🏷️ Tags:</span>
+        ${currentTags.length > 0 ? currentTags.map(tag => `
+          <span style="background: #667eea; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px;">
+            ${tag}
+            <span onclick="removeProductTag('${productName.replace(/'/g, "\\'")}', '${tag}')" style="cursor: pointer; font-weight: bold;">&times;</span>
+          </span>
+        `).join('') : '<span style="color: #999; font-size: 12px;">No tags yet</span>'}
+      </div>
+      <div style="display: flex; gap: 5px;">
+        <input
+          type="text"
+          id="new-tag-input"
+          list="existing-tags-list"
+          placeholder="Add tag (e.g., coffee, hot beverage)"
+          onkeypress="if(event.key === 'Enter') addProductTag('${productName.replace(/'/g, "\\'")}')"
+          style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px;">
+        <datalist id="existing-tags-list">
+          ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+        </datalist>
+        <button
+          onclick="addProductTag('${productName.replace(/'/g, "\\'")}')"
+          class="btn"
+          style="padding: 6px 15px; font-size: 13px;">
+          Add
+        </button>
+      </div>
+      ${allExistingTags.length > 0 ? `
+        <div style="margin-top: 8px; font-size: 11px; color: #666;">
+          💡 Existing tags: ${allExistingTags.join(', ')}
+        </div>
+      ` : ''}
+    </div>
+
+    ${isWeightBased ? `
+      <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <h3 style="color: #2e7d32; margin-bottom: 15px;">📊 Price per Kilogram Trend</h3>
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">BEST PRICE</div>
+            <div style="font-size: 20px; font-weight: bold; color: #28a745;">🏆 ${weightStats.min.toFixed(2)} kr/kg</div>
+            <div style="font-size: 10px; color: #666; margin-top: 2px;">${bestPriceDate}</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">AVERAGE</div>
+            <div style="font-size: 20px; font-weight: bold;">${weightStats.avg.toFixed(2)} kr/kg</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">LATEST</div>
+            <div style="font-size: 20px; font-weight: bold; color: ${weightStats.currentVsAvg < -5 ? '#28a745' : weightStats.currentVsAvg > 5 ? '#dc3545' : '#666'};">
+              ${weightStats.latest.toFixed(2)} kr/kg
+            </div>
+            <div style="font-size: 10px; color: ${weightStats.currentVsAvg < 0 ? '#28a745' : '#dc3545'}; margin-top: 2px;">
+              ${weightStats.currentVsAvg > 0 ? '⬆' : '⬇'} ${Math.abs(weightStats.currentVsAvg).toFixed(1)}% vs avg
+            </div>
+          </div>
+          <div style="text-align: center;">
+            <div style="color: #666; font-size: 12px;">HIGHEST</div>
+            <div style="font-size: 20px; font-weight: bold; color: #dc3545;">${weightStats.max.toFixed(2)} kr/kg</div>
+          </div>
+        </div>
+
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+          <canvas id="price-per-kg-chart" style="max-height: 200px;"></canvas>
+        </div>
+
+        <div style="margin-top: 10px; text-align: center; padding: 10px; background: ${weightStats.currentVsAvg < 0 ? '#d4edda' : weightStats.currentVsAvg > 10 ? '#f8d7da' : '#fff3cd'}; border-radius: 5px;">
+          ${weightStats.currentVsAvg < -5 ?
+            `<strong style="color: #155724;">✓ Good Deal!</strong> Current price is ${Math.abs(weightStats.currentVsAvg).toFixed(1)}% below your average` :
+            weightStats.currentVsAvg > 10 ?
+            `<strong style="color: #721c24;">⚠ High Price!</strong> Current price is ${weightStats.currentVsAvg.toFixed(1)}% above your average` :
+            `<strong style="color: #856404;">💰 Normal Price</strong> Current price is near your average`
+          }
+        </div>
+      </div>
+    ` : ''}
+
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'LOWEST TOTAL' : 'LOWEST PRICE'}</div>
+        <div style="font-size: 24px; font-weight: bold; color: #28a745;">${stats.min.price.toFixed(2)} kr</div>
+        <div style="font-size: 11px; color: #999;">${stats.min.date}</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'AVG TOTAL' : 'AVERAGE'}</div>
+        <div style="font-size: 24px; font-weight: bold;">${stats.avg.toFixed(2)} kr</div>
+      </div>
+      <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; text-align: center;">
+        <div style="color: #666; font-size: 12px;">${isWeightBased ? 'HIGHEST TOTAL' : 'HIGHEST PRICE'}</div>
+        <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${stats.max.price.toFixed(2)} kr</div>
+        <div style="font-size: 11px; color: #999;">${stats.max.date}</div>
+      </div>
+    </div>
+
+    <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+      <div><strong>Price Trend:</strong> ${trend} (${stats.priceChange > 0 ? '+' : ''}${stats.priceChange.toFixed(1)}%)</div>
+      <div style="margin-top: 5px;"><strong>Total Savings:</strong> ${stats.totalDiscount.toFixed(2)} kr</div>
+      <div style="margin-top: 5px;"><strong>Purchases:</strong> ${history.purchases.length} times</div>
+    </div>
+
+    <h3>Purchase History</h3>
+    <div style="max-height: 300px; overflow-y: auto;">
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            ${isWeightBased ? '<th>Weight</th>' : '<th>Qty</th>'}
+            ${isWeightBased ? '<th>Price/kg</th>' : ''}
+            <th>Unit Price</th>
+            <th>Discount</th>
+            <th>Net Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${history.purchases.map((p, idx) => {
+            const netPrice = p.totalPrice - p.discount;
+
+            // For weight-based items, compare price per kg instead of total
+            const currentPrice = isWeightBased && p.pricePerKg ? p.pricePerKg : p.unitPrice;
+            const prevPrice = idx > 0 ? (isWeightBased && history.purchases[idx - 1].pricePerKg ? history.purchases[idx - 1].pricePerKg : history.purchases[idx - 1].unitPrice) : currentPrice;
+            const priceChange = ((currentPrice - prevPrice) / prevPrice * 100).toFixed(1);
+            const changeIndicator = idx > 0 && Math.abs(priceChange) > 2 ?
+              (priceChange > 0 ? ` ⚠+${priceChange}%` : ` ✓${priceChange}%`) : '';
+
+            // Check if this is the best price for weight-based products
+            const isBestPrice = isWeightBased && p.pricePerKg && p.date === bestPriceDate;
+            const isBelowAvg = isWeightBased && weightStats && p.pricePerKg && p.pricePerKg < weightStats.avg;
+
+            return `
+              <tr style="${isBestPrice ? 'background: #d4edda;' : isBelowAvg ? 'background: #f0f8f0;' : ''}">
+                <td>${p.date}${isBestPrice ? ' <strong style="color: #28a745;">🏆 BEST</strong>' : ''}</td>
+                ${isWeightBased ? `<td>${p.weight ? p.weight.toFixed(3) + ' kg' : '—'}</td>` : `<td>${p.quantity}</td>`}
+                ${isWeightBased ? `<td><strong style="color: ${isBestPrice ? '#28a745' : isBelowAvg ? '#20c997' : 'inherit'};">${p.pricePerKg ? p.pricePerKg.toFixed(2) + ' kr/kg' + changeIndicator : '—'}</strong></td>` : ''}
+                <td>${p.unitPrice.toFixed(2)} kr${!isWeightBased ? changeIndicator : ''}</td>
+                <td style="color: #28a745;">${p.discount > 0 ? '-' + p.discount.toFixed(2) : '0.00'}</td>
+                <td><strong>${netPrice.toFixed(2)} kr</strong></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Render kr/kg chart for weight-based products
+  if (isWeightBased && weightStats) {
+    setTimeout(() => {
+      const chartCanvas = document.getElementById('price-per-kg-chart');
+      if (chartCanvas) {
+        const chartData = history.purchases
+          .filter(p => p.pricePerKg)
+          .map(p => ({
+            x: p.date,
+            y: p.pricePerKg
+          }));
+
+        new Chart(chartCanvas, {
+          type: 'line',
+          data: {
+            labels: chartData.map(d => d.x),
+            datasets: [
+              {
+                label: 'Price per kg (kr/kg)',
+                data: chartData.map(d => d.y),
+                borderColor: '#2e7d32',
+                backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 5,
+                pointBackgroundColor: chartData.map(d =>
+                  d.y === weightStats.min ? '#28a745' :
+                  d.y < weightStats.avg ? '#20c997' : '#dc3545'
+                ),
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+              },
+              {
+                label: 'Average (' + weightStats.avg.toFixed(2) + ' kr/kg)',
+                data: chartData.map(() => weightStats.avg),
+                borderColor: '#ffc107',
+                borderDash: [5, 5],
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'top'
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    if (context.datasetIndex === 0) {
+                      const value = context.parsed.y;
+                      const diffFromAvg = ((value - weightStats.avg) / weightStats.avg * 100).toFixed(1);
+                      return value.toFixed(2) + ' kr/kg (' + (diffFromAvg > 0 ? '+' : '') + diffFromAvg + '% vs avg)';
+                    }
+                    return 'Average: ' + context.parsed.y.toFixed(2) + ' kr/kg';
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: false,
+                title: {
+                  display: true,
+                  text: 'kr/kg'
+                },
+                ticks: {
+                  callback: function(value) {
+                    return value.toFixed(2) + ' kr';
+                  }
+                }
+              },
+              x: {
+                title: {
+                  display: true,
+                  text: 'Purchase Date'
+                }
+              }
+            }
+          }
+        });
+      }
+    }, 100);
+  }
+}
+
+function closeModal() {
+  document.getElementById('product-modal').style.display = 'none';
+  document.getElementById('modal-overlay').style.display = 'none';
+  modalNavigationContext = null; // Clear navigation context
+}
+
+// Show product detail from tag filter (with back navigation)
+function showProductDetailFromTag(productName, tag) {
+  modalNavigationContext = { type: 'tag', tag: tag };
+  showProductDetail(productName);
+}
+
+// Update product category from analysis tab
+function updateProductCategory(productName, newCategory) {
+  console.log('=== UPDATE PRODUCT CATEGORY (from Analysis) ===');
+  console.log('Product Name:', productName);
+  console.log('New Category:', newCategory);
+
+  const customMappings = loadCustomMappings();
+
+  // Find all raw product names that map to this product name
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.productName === productName);
+
+  console.log('Found', matchingProducts.length, 'matching products to update');
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    console.log('Updating raw name:', rawName);
+
+    if (!customMappings[rawName]) {
+      // Initialize with new data structure
+      customMappings[rawName] = {
+        productName: product.productName,
+        brand: product.brand,
+        productType: newCategory,  // ✅ FIXED: Use productType instead of category
+        storeSection: mapProductTypeToStoreSection(newCategory),
+        tags: []
+      };
+      console.log('Initialized new mapping for', rawName);
+    } else {
+      customMappings[rawName].productType = newCategory;
+      // DON'T auto-update storeSection - user controls this manually
+      console.log('Updated existing mapping for', rawName, '(storeSection preserved)');
+    }
+  });
+
+  // Save and refresh
+  saveCustomMappings(customMappings);
+  console.log('✓ Category update complete');
+
+  // Reanalyze all receipts to reflect changes in all tabs
+  refreshAnalysis();
+
+  // Preserve navigation context before closing
+  const savedContext = modalNavigationContext;
+  closeModal();
+  setTimeout(() => {
+    modalNavigationContext = savedContext;
+    showProductDetail(productName);
+  }, 100);
+}
+
+// Get tags for a product by raw name (optimized for Product Library)
+function getProductTagsByRawName(rawName) {
+  const customMappings = loadCustomMappings();
+  const mapping = customMappings[rawName];
+
+  if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+    return mapping.tags.sort();
+  }
+
+  return [];
+}
+
+// Get tags for a product (returns array of unique tags across all raw names)
+function getProductTags(standardName) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  const allTags = new Set();
+  matchingProducts.forEach(product => {
+    const mapping = customMappings[product.rawName];
+    if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => allTags.add(tag));
+    }
+  });
+
+  return Array.from(allTags).sort();
+}
+
+// Update tags for a product
+function updateProductTags(standardName, tags) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const matchingProducts = productLibrary.filter(p => p.standardName === standardName);
+
+  // Update custom mapping for each raw name
+  matchingProducts.forEach(product => {
+    const rawName = product.rawName;
+    if (!customMappings[rawName]) {
+      customMappings[rawName] = {
+        standardName: product.standardName,
+        category: product.category,
+        tags: tags
+      };
+    } else {
+      customMappings[rawName].tags = tags;
+    }
+  });
+
+  // Save and refresh
+  saveCustomMappings(customMappings);
+
+  // Preserve navigation context before closing
+  const savedContext = modalNavigationContext;
+  closeModal();
+  setTimeout(() => {
+    modalNavigationContext = savedContext;
+    showProductDetail(standardName);
+  }, 100);
+}
+
+// Add a tag to a product
+function addProductTag(standardName) {
+  const tagInput = document.getElementById('new-tag-input');
+  const newTag = tagInput.value.trim().toLowerCase();
+
+  if (!newTag) {
+    alert('Tag cannot be empty');
+    return;
+  }
+
+  const currentTags = getProductTags(standardName);
+  if (currentTags.includes(newTag)) {
+    alert('This tag already exists');
+    tagInput.value = '';
+    return;
+  }
+
+  currentTags.push(newTag);
+  updateProductTags(standardName, currentTags);
+}
+
+// Remove a tag from a product
+function removeProductTag(standardName, tag) {
+  const currentTags = getProductTags(standardName);
+  const filtered = currentTags.filter(t => t !== tag);
+  updateProductTags(standardName, filtered);
+}
+
+// Add tag from Product Library table
+function addProductTagFromLibrary(inputElement) {
+  const rawName = inputElement.getAttribute('data-raw-product');
+  const newTag = inputElement.value.trim().toLowerCase();
+
+  if (!newTag) {
+    return;
+  }
+
+  const currentTags = getProductTagsByRawName(rawName);
+  if (currentTags.includes(newTag)) {
+    alert('This tag already exists');
+    return;
+  }
+
+  currentTags.push(newTag);
+  updateProductTagsByRawName(rawName, currentTags);
+}
+
+// Remove tag from Product Library table
+function removeProductTagFromLibrary(rawName, tag) {
+  const currentTags = getProductTagsByRawName(rawName);
+  const filtered = currentTags.filter(t => t !== tag);
+  updateProductTagsByRawName(rawName, filtered);
+}
+
+// Update tags by raw name and refresh Product Library (optimized)
+function updateProductTagsByRawName(rawName, tags) {
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const product = productLibrary.find(p => p.rawName === rawName);
+
+  if (!product) return;
+
+  if (!customMappings[rawName]) {
+    // Initialize with new data structure
+    customMappings[rawName] = {
+      productName: product.productName,
+      brand: product.brand,
+      productType: product.productType,
+      storeSection: product.storeSection,
+      tags: tags
+    };
+  } else {
+    customMappings[rawName].tags = tags;
+  }
+
+  // Save and refresh library
+  saveCustomMappings(customMappings);
+
+  // Save scroll position before re-rendering
+  const scrollContainer = document.getElementById('product-library-scroll-container');
+  const scrollPosition = scrollContainer ? scrollContainer.scrollTop : 0;
+  console.log('📍 Saved scroll position:', scrollPosition);
+
+  renderProductLibrary(document.getElementById('productSearch').value);
+
+  // Restore scroll position after re-rendering - use requestAnimationFrame for better timing
+  requestAnimationFrame(() => {
+    const scrollContainerAfter = document.getElementById('product-library-scroll-container');
+    if (scrollContainerAfter) {
+      scrollContainerAfter.scrollTop = scrollPosition;
+      console.log('📍 Restored scroll position to:', scrollPosition);
+      console.log('📍 Current scroll position after restore:', scrollContainerAfter.scrollTop);
+    } else {
+      console.error('❌ Scroll container not found after re-render');
+    }
+  });
+}
+
+// Show detailed products for a category
+function showCategoryDetails(categoryName) {
+  const detailsDiv = document.getElementById('category-details');
+
+  // Get all products in this category
+  const categoryData = analysisInstance.processed.categories[categoryName];
+  if (!categoryData) {
+    detailsDiv.innerHTML = '<p style="color: #999;">No products found in this category.</p>';
+    return;
+  }
+
+  // Group by product name
+  const productMap = {};
+  categoryData.forEach(purchase => {
+    if (!productMap[purchase.standardName]) {
+      productMap[purchase.standardName] = {
+        name: purchase.standardName,
+        totalQuantity: 0,
+        totalSpent: 0,
+        totalDiscount: 0,
+        purchases: []
+      };
+    }
+    productMap[purchase.standardName].totalQuantity += purchase.quantity;
+    productMap[purchase.standardName].totalSpent += purchase.totalPrice;
+    productMap[purchase.standardName].totalDiscount += purchase.discount;
+    productMap[purchase.standardName].purchases.push(purchase);
+  });
+
+  // Convert to array and sort by spending
+  const products = Object.values(productMap).sort((a, b) => b.totalSpent - a.totalSpent);
+
+  // Pre-build tag lookup map to avoid rebuilding product library multiple times
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+  const tagLookupMap = {};
+
+  products.forEach(p => {
+    const allTags = new Set();
+    const matchingProducts = productLibrary.filter(prod => prod.standardName === p.name);
+    matchingProducts.forEach(product => {
+      const mapping = customMappings[product.rawName];
+      if (mapping && mapping.tags && Array.isArray(mapping.tags)) {
+        mapping.tags.forEach(tag => allTags.add(tag));
+      }
+    });
+    tagLookupMap[p.name] = Array.from(allTags).sort();
+  });
+
+  detailsDiv.innerHTML = `
+    <div style="border-top: 2px solid #ddd; padding-top: 20px;">
+      <h3 style="color: #667eea; margin-bottom: 15px;">
+        📦 Products in "${categoryName}" Category (${products.length} products)
+      </h3>
+
+      <table class="analysis-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Total Qty</th>
+            <th>Total Spent</th>
+            <th>Avg Price</th>
+            <th>Purchases</th>
+            <th>Discounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${products.map(p => {
+            const avgPrice = p.totalSpent / p.totalQuantity;
+            const tags = tagLookupMap[p.name] || [];
+            return `
+              <tr style="cursor: pointer;" onclick="showProductDetail('${p.name.replace(/'/g, "\\'")}')">
+                <td>
+                  <strong>${p.name}</strong>
+                  ${tags.length > 0 ? `<br><div style="margin-top: 4px;">${tags.map(tag =>
+                    `<span style="background: #e8f5e9; color: #2e7d32; padding: 2px 6px; border-radius: 8px; font-size: 10px; margin-right: 4px;">🏷️ ${tag}</span>`
+                  ).join('')}</div>` : ''}
+                </td>
+                <td>${p.totalQuantity}</td>
+                <td>${p.totalSpent.toFixed(2)} kr</td>
+                <td>${avgPrice.toFixed(2)} kr</td>
+                <td>${p.purchases.length} times</td>
+                <td style="color: ${p.totalDiscount > 0 ? '#28a745' : '#999'};">
+                  ${p.totalDiscount > 0 ? '-' + p.totalDiscount.toFixed(2) + ' kr' : 'None'}
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <p style="margin-top: 15px; font-size: 12px; color: #666; text-align: center;">
+        💡 Click on any product to see detailed price history and trends
+      </p>
+    </div>
+  `;
+
+  // Scroll to the details
+  detailsDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ===== PRODUCT LIBRARY MANAGEMENT =====
+
+// Load custom product mappings from localStorage
+function loadCustomMappings() {
+  const saved = localStorage.getItem('customProductMappings_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Migrate old data structure to new structure
+function migrateOldDataStructure() {
+  const mappings = loadCustomMappings();
+  let migrated = false;
+
+  Object.keys(mappings).forEach(rawName => {
+    const mapping = mappings[rawName];
+
+    // Check if this is old format (has standardName or category but not productName)
+    if ((mapping.standardName || mapping.category || mapping.shoppingListName) && !mapping.productName) {
+      console.log(`Migrating: ${rawName}`);
+
+      // Extract brand if not present
+      if (!mapping.brand) {
+        mapping.brand = extractBrand(rawName);
+      }
+
+      // Convert shoppingListName or standardName to productName
+      if (!mapping.productName) {
+        if (mapping.shoppingListName) {
+          mapping.productName = mapping.shoppingListName;
+        } else if (mapping.standardName) {
+          mapping.productName = mapping.standardName;
+        } else {
+          const cleaned = cleanProductName(rawName, mapping.brand);
+          mapping.productName = suggestShoppingListName(cleaned);
+        }
+      }
+
+      // Convert category to productType
+      if (!mapping.productType && mapping.category) {
+        mapping.productType = mapping.category;
+      }
+
+      // Set storeSection if not present
+      if (!mapping.storeSection && mapping.productType) {
+        mapping.storeSection = mapProductTypeToStoreSection(mapping.productType);
+      }
+
+      migrated = true;
+    }
+  });
+
+  if (migrated) {
+    console.log('Data migration complete - saving...');
+    saveCustomMappings(mappings);
+    return true;
+  }
+
+  return false;
+}
+
+// Save custom product mappings to localStorage
+function saveCustomMappings(mappings) {
+  console.log('💾 Saving custom mappings to localStorage...');
+  localStorage.setItem('customProductMappings_v2', JSON.stringify(mappings));
+  invalidateProductLibraryCache(); // Clear cache when mappings change
+  console.log('✓ Saved to localStorage');
+
+  // Analysis will be refreshed when user switches to Analysis tab
+  // No need for immediate expensive refresh on every save
+}
+
+// Build product library from all receipts
+
+// Swedish brand database for auto-detection
+const SWEDISH_BRANDS = {
+  dairy: ['ARLA', 'VALIO', 'LINDAHLS', 'DANONE', 'SKÅNEMEJERIER', 'NORRMEJERIER', 'GARANT'],
+  coffee: ['GEVALIA', 'LÖFBERGS', 'ZOEGA', 'ZOEGAS', 'CLASSIC', 'ARVID NORDQUIST', 'CIRKEL'],
+  beverages: ['COCA-COLA', 'PEPSI', 'LOKA', 'ZINGO', 'BRAVO', 'RAMLÖSA', 'FESTIS'],
+  meat: ['SCAN', 'DALSJÖFORS', 'CHRISTMAS', 'SVENSK FLÄSK', 'GYLLEBO'],
+  bread: ['PÅGEN', 'POLARBRÖD', 'BONJOUR', 'SKOGAHOLM', 'SCHULSTAD'],
+  store: ['ICA', 'COOP', 'GARANT', 'ELDORADO', 'FIRST PRICE', 'WILLYS'],
+  snacks: ['ESTRELLA', 'OLW', 'MARABOU', 'CLOETTA', 'FAZER'],
+  household: ['YES', 'ZALO', 'AJAX', 'CIF', 'MR MUSCLE'],
+  personalCare: ['GLISS', 'DOVE', 'NIVEA', 'GARNIER', 'HEAD & SHOULDERS', 'PANTENE', 'LOREAL', "L'OREAL", 'TRESEMME'],
+  oil: ['ZETA', 'BORGES', 'MONINI', 'CARLSHAMN'],
+  pasta: ['BARILLA', 'GAROFALO', 'DE CECCO'],
+  frozen: ['FINDUS', 'FELIX', 'VIKING']
+};
+
+// Flatten all brands into a single searchable list
+const ALL_BRANDS = Object.values(SWEDISH_BRANDS).flat();
+
+// Extract brand from product name
+function extractBrand(productName) {
+  if (!productName) return null;
+
+  const upperName = productName.toUpperCase();
+
+  // Check for exact brand matches
+  for (const brand of ALL_BRANDS) {
+    // Use word boundary to avoid partial matches
+    const regex = new RegExp(`\\b${brand}\\b`, 'i');
+    if (regex.test(upperName)) {
+      return brand;
+    }
+  }
+
+  return null;
+}
+
+// Remove brand and details from product name to get clean product name
+function cleanProductName(rawName, brand) {
+  let cleaned = rawName.toUpperCase();
+
+  // Remove brand if found
+  if (brand) {
+    cleaned = cleaned.replace(new RegExp(`\\b${brand}\\b`, 'gi'), '').trim();
+  }
+
+  // Remove common details
+  cleaned = cleaned
+    .replace(/\d+\s*G\b/gi, '')       // 500G, 1KG
+    .replace(/\d+\s*KG\b/gi, '')
+    .replace(/\d+\s*ML\b/gi, '')      // 1L, 500ML
+    .replace(/\d+\s*L\b/gi, '')
+    .replace(/\d+\s*ST\b/gi, '')      // 20ST
+    .replace(/\d+\s*P\b/gi, '')       // 12P
+    .replace(/\d+\s*PACK\b/gi, '')    // 20-PACK
+    .replace(/\d+[,\.]\d+%/g, '')     // 1.5%, 3%
+    .replace(/\bEKOLOGISK\b/gi, '')
+    .replace(/\bSVENSK\b/gi, '')
+    .replace(/\bIMPORT\b/gi, '')
+    .replace(/\bCA\b/gi, '')          // Ca 2.2kg
+    .replace(/\bKLASS\s*\d+\b/gi, '') // Klass 1
+    .replace(/[-\/]/g, ' ')           // Replace dashes and slashes
+    .replace(/\s+/g, ' ')             // Normalize spaces
+    .trim();
+
+  return cleaned;
+}
+
+// Suggest a generic shopping list name from a product name
+function suggestShoppingListName(productName) {
+  if (!productName) return '';
+
+  const name = productName.toUpperCase().trim();
+
+  // Common patterns to extract generic names
+  const patterns = [
+    // Coffee
+    { regex: /KAFFE|COFFEE|ESPRESSO|BRYGG/i, name: 'kaffe' },
+    // Milk
+    { regex: /MJÖLK|MILK|FILMJÖLK|LÄTTMJÖLK|MELLANMJÖLK|MINIMJÖLK/i, name: 'mjölk' },
+    // Bread
+    { regex: /BRÖD|BREAD|LIMPA|FRALLOR|FRALLA|LEVAIN/i, name: 'bröd' },
+    // Cheese
+    { regex: /OST|CHEESE|HUSHÅLLSOST|PRÄSTOST|VÄSTERBOTTEN/i, name: 'ost' },
+    // Butter
+    { regex: /SMÖR|BUTTER|BREGOTT/i, name: 'smör' },
+    // Eggs
+    { regex: /ÄGG|EGG/i, name: 'ägg' },
+    // Yogurt
+    { regex: /YOGHURT|YOGURT|TURKISK|GREKISK/i, name: 'yoghurt' },
+    // Juice
+    { regex: /JUICE|SAF/i, name: 'juice' },
+    // Mustard
+    { regex: /SENAP|MUSTARD|DIJON/i, name: 'senap' },
+    // Fabric softener
+    { regex: /SKÖLJM|SKÖLJMEDEL|SOFTENER/i, name: 'sköljmedel' },
+    // Tomatoes
+    { regex: /TOMAT|TOMATO/i, name: 'tomat' },
+    // Cucumber
+    { regex: /GURKA|CUCUMBER/i, name: 'gurka' },
+    // Bananas
+    { regex: /BANAN|BANANA/i, name: 'bananer' },
+    // Apples
+    { regex: /ÄPPL|APPLE/i, name: 'äpple' },
+    // Onion
+    { regex: /LÖK|ONION|GULLÖK|RÖDLÖK/i, name: 'lök' },
+    // Potatoes
+    { regex: /POTATIS|POTATO|POTAT/i, name: 'potatis' },
+    // Pasta
+    { regex: /PASTA|MAKARONER|SPAGHETTI|PENNE/i, name: 'pasta' },
+    // Rice
+    { regex: /RIS|RICE|JASMIN/i, name: 'ris' },
+    // Chicken
+    { regex: /KYCKLING|CHICKEN/i, name: 'kyckling' },
+    // Meat
+    { regex: /KÖTTFÄRS|FÄRS|GROUND/i, name: 'köttfärs' },
+    // Ham
+    { regex: /SKINKA|HAM/i, name: 'skinka' },
+    // Sausage
+    { regex: /KORV|SAUSAGE|FALUKORV/i, name: 'korv' },
+    // Fish
+    { regex: /FISK|FISH|LAX|SALMON/i, name: 'fisk' },
+    // Paper
+    { regex: /PAPPER|PAPER|HUSHÅLLSPAPPER/i, name: 'papper' },
+    // Toilet paper
+    { regex: /TOALETTPAPPER|TOILET/i, name: 'toalettpapper' }
+  ];
+
+  // Try to match against known patterns
+  for (const pattern of patterns) {
+    if (pattern.regex.test(name)) {
+      return pattern.name;
+    }
+  }
+
+  // If no pattern matches, extract first word and make it lowercase
+  const words = name.split(/\s+/);
+  if (words.length > 0) {
+    const firstWord = words[0];
+    // All lowercase
+    return firstWord.toLowerCase();
+  }
+
+  return productName.toLowerCase();
+}
+
+function buildProductLibrary() {
+  const productMap = new Map();
+  const customMappings = loadCustomMappings();
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      const rawName = item.name;
+      if (!productMap.has(rawName)) {
+        const customData = customMappings[rawName];
+
+        // Extract brand (from custom data or auto-detect)
+        const brand = customData?.brand || extractBrand(rawName);
+
+        // Get product name (from custom or auto-clean)
+        let productName;
+        if (customData?.productName) {
+          productName = customData.productName;
+        } else if (customData?.shoppingListName) {
+          // Migrate old shoppingListName to productName
+          productName = customData.shoppingListName;
+        } else {
+          // Auto-generate: clean the raw name and suggest
+          const cleaned = cleanProductName(rawName, brand);
+          productName = suggestShoppingListName(cleaned);
+        }
+
+        // Get product type (renamed from category)
+        const productType = customData?.productType || customData?.category ||
+                           window.ProductCategories.getCategory(productName);
+
+        // Get store section - ONLY use saved value if it exists, otherwise calculate
+        // Use 'in' operator to check if property exists (not just truthy)
+        const storeSection = customData && 'storeSection' in customData
+                           ? customData.storeSection
+                           : mapProductTypeToStoreSection(productType);
+
+        productMap.set(rawName, {
+          rawName: rawName,
+          standardName: window.ProductCategories.standardizeProduct(rawName),
+          productName: productName,
+          brand: brand,
+          productType: productType,
+          storeSection: storeSection,
+          count: 0,
+          totalSpent: 0,
+          lastSeen: receipt.date,
+          isCustom: !!customData
+        });
+      }
+
+      const product = productMap.get(rawName);
+      product.count += item.quantity;
+      product.totalSpent += item.totalPrice;
+      if (receipt.date > product.lastSeen) {
+        product.lastSeen = receipt.date;
+      }
+    });
+  });
+
+  return Array.from(productMap.values()).sort((a, b) => b.count - a.count);
+}
+
+// Map product type to store section
+function mapProductTypeToStoreSection(productType) {
+  const mapping = {
+    'Beverages': 'dryck',
+    'Alcoholic Beverages': 'dryck',
+    'Produce': 'frukt-gront',
+    'Bread & Bakery': 'brod',
+    'Dairy': 'kylskap',
+    'Dairy - Cheese': 'kylskap',
+    'Dairy - Butter': 'kylskap',
+    'Dairy - Eggs': 'kylskap',
+    'Dairy - Yogurt': 'kylskap',
+    'Meat & Proteins': 'kylskap',
+    'Frozen Foods': 'fryst',
+    'Pantry - Spices': 'kryddor',
+    'Pantry - Pasta': 'skafferi',
+    'Pantry - Grains': 'skafferi',
+    'Pantry - Sauces': 'skafferi',
+    'Condiments & Spreads': 'skafferi',
+    'Breakfast & Cereals': 'skafferi',
+    'Snacks': 'snacks-godis',
+    'Personal Care': 'halsa-skonhet',
+    'Household': 'icke-mat',
+    'Other': 'skafferi'
+  };
+
+  return mapping[productType] || 'skafferi';
+}
+
+// Get all unique categories
+function getAllCategories() {
+  const defaultCategories = [
+    'frukost',
+    'lunch',
+    'middag',
+    'mellanmål',
+    'snacks',
+    'godis',
+    'dryck',
+    'hälsa',
+    'städning',
+    'katmat',
+    'övrigt'
+  ];
+
+  // Load deleted and renamed categories
+  const deletedCategories = loadDeletedCategories();
+  const renamedCategories = loadRenamedCategories();
+
+  // Apply renames and filter deletions to default categories
+  const processedDefaults = defaultCategories
+    .filter(cat => !deletedCategories.includes(cat))
+    .map(cat => renamedCategories[cat] || cat);
+
+  // Load custom categories
+  const customCategories = loadCustomCategories();
+
+  // Merge and sort
+  const allCategories = [...new Set([...processedDefaults, ...customCategories])];
+  return allCategories.sort();
+}
+
+// Load deleted categories from localStorage
+function loadDeletedCategories() {
+  const saved = localStorage.getItem('deletedCategories_v2');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save deleted categories to localStorage
+function saveDeletedCategories(categories) {
+  localStorage.setItem('deletedCategories_v2', JSON.stringify(categories));
+}
+
+// Load renamed categories from localStorage (maps old name -> new name)
+function loadRenamedCategories() {
+  const saved = localStorage.getItem('renamedCategories_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save renamed categories to localStorage
+function saveRenamedCategories(renames) {
+  localStorage.setItem('renamedCategories_v2', JSON.stringify(renames));
+}
+
+// Load custom categories from localStorage
+function loadCustomCategories() {
+  const saved = localStorage.getItem('customCategories_v2');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save custom categories to localStorage
+function saveCustomCategories(categories) {
+  localStorage.setItem('customCategories_v2', JSON.stringify(categories));
+}
+
+// Add a new custom category
+function addCustomCategory(categoryName) {
+  const trimmed = categoryName.trim();
+  if (!trimmed) {
+    alert('Category name cannot be empty');
+    return false;
+  }
+
+  const existing = getAllCategories();
+  if (existing.includes(trimmed)) {
+    alert('This category already exists');
+    return false;
+  }
+
+  const customCategories = loadCustomCategories();
+  customCategories.push(trimmed);
+  saveCustomCategories(customCategories);
+  return true;
+}
+
+// Delete a custom category
+function deleteCustomCategory(categoryName) {
+  console.log('=== DELETE PRODUCT TYPE ===');
+  console.log('Deleting:', categoryName);
+
+  // Check if it's a default category
+  const defaultCategories = [
+    'frukost', 'lunch', 'middag', 'mellanmål', 'snacks', 'godis',
+    'dryck', 'hälsa', 'städning', 'katmat', 'övrigt'
+  ];
+
+  if (defaultCategories.includes(categoryName)) {
+    // Add to deleted defaults list
+    const deletedCategories = loadDeletedCategories();
+    if (!deletedCategories.includes(categoryName)) {
+      deletedCategories.push(categoryName);
+      saveDeletedCategories(deletedCategories);
+      console.log('✓ Added to deleted defaults list');
+    }
+  } else {
+    // Remove from custom categories
+    const customCategories = loadCustomCategories();
+    const filtered = customCategories.filter(c => c !== categoryName);
+    saveCustomCategories(filtered);
+    console.log('✓ Removed from custom categories');
+  }
+
+  // Update any products using this category to "Other"
+  const customMappings = loadCustomMappings();
+  let updated = false;
+  Object.keys(customMappings).forEach(rawName => {
+    if (customMappings[rawName].productType === categoryName) {
+      customMappings[rawName].productType = 'Other';
+      customMappings[rawName].storeSection = mapProductTypeToStoreSection('Other');
+      updated = true;
+      console.log('Updated product:', rawName);
+    }
+  });
+  if (updated) {
+    saveCustomMappings(customMappings);
+    console.log('✓ Updated products to use "Other"');
+  }
+  console.log('=== DELETE COMPLETE ===');
+}
+
+// Cache for product names autocomplete (for performance)
+let productNamesCache = [];
+// Cache for built product library (performance optimization)
+let productLibraryCache = null;
+let productLibraryCacheTimestamp = 0;
+
+// Invalidate product library cache (call when receipts or mappings change)
+function invalidateProductLibraryCache() {
+  productLibraryCache = null;
+  productNamesCache = [];
+}
+
+// Rebuild product library cache
+function rebuildProductLibraryCache() {
+  productLibraryCache = buildProductLibrary();
+  productLibraryCacheTimestamp = Date.now();
+
+  // Cache unique product names for autocomplete (performance optimization)
+  productNamesCache = [...new Set(
+    productLibraryCache
+      .map(p => p.productName)
+      .filter(name => name && name.trim())
+  )].sort();
+
+  return productLibraryCache;
+}
+
+// Render product library table
+function renderProductLibrary(searchFilter = '') {
+  // Use cached product library if available, otherwise build it
+  const products = productLibraryCache || rebuildProductLibraryCache();
+
+  const filteredProducts = searchFilter
+    ? products.filter(p => {
+        const tags = getProductTagsByRawName(p.rawName);
+        const search = searchFilter.toLowerCase();
+        return p.rawName.toLowerCase().includes(search) ||
+               (p.productName && p.productName.toLowerCase().includes(search)) ||
+               (p.brand && p.brand.toLowerCase().includes(search)) ||
+               (p.productType && p.productType.toLowerCase().includes(search)) ||
+               (p.storeSection && p.storeSection.toLowerCase().includes(search)) ||
+               tags.some(tag => tag.toLowerCase().includes(search));
+      })
+    : products;
+
+  const categories = getAllCategories();
+  const customMappings = loadCustomMappings();
+
+  const content = document.getElementById('product-library-content');
+
+  if (filteredProducts.length === 0) {
+    content.innerHTML = `
+      <div style="text-align: center; padding: 40px 20px; color: #999;">
+        <div style="font-size: 48px; margin-bottom: 20px;">🔍</div>
+        <h3>No products found</h3>
+        <p style="margin-top: 10px;">Try a different search term</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Get all existing tags once before rendering
+  const allExistingTags = getAllTags();
+
+  content.innerHTML = `
+    <div style="margin-bottom: 15px; color: #666;">
+      <strong>${filteredProducts.length}</strong> products found (${products.length} total)
+      ${Object.keys(customMappings).length > 0 ? `
+        • <span style="color: #28a745;"><strong>${Object.keys(customMappings).length}</strong> custom mappings</span>
+      ` : ''}
+    </div>
+
+    <!-- Shared datalists for all inputs (performance optimization) -->
+    <datalist id="shared-tags-list">
+      ${allExistingTags.map(tag => `<option value="${tag}">`).join('')}
+    </datalist>
+
+    <div id="product-library-scroll-container" style="max-height: 70vh; overflow-y: auto;">
+      <table class="product-table">
+        <thead>
+          <tr>
+            <th style="width: 20%;">Receipt Name</th>
+            <th style="width: 15%;">Product Name</th>
+            <th style="width: 10%;">Brand</th>
+            <th style="width: 14%;">Product Type</th>
+            <th style="width: 13%;">Store Section</th>
+            <th style="width: 18%;">Tags</th>
+            <th style="width: 10%;">Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredProducts.map(p => {
+            const productTags = getProductTagsByRawName(p.rawName);
+            const storeSectionName = STORE_CATEGORIES.find(c => c.id === p.storeSection)?.name || p.storeSection;
+            return `
+            <tr style="position: relative;">
+              <td>
+                <div style="font-family: monospace; color: #555; font-size: 12px;">${p.rawName}</div>
+                <div style="font-size: 11px; color: #999; margin-top: 2px;">Last: ${p.lastSeen}</div>
+              </td>
+              <td style="position: relative; overflow: visible;">
+                <input
+                  type="text"
+                  value="${p.productName || ''}"
+                  data-raw="${p.rawName}"
+                  data-field="productName"
+                  onchange="updateProductMapping(this)"
+                  oninput="filterProductLibraryNames(this)"
+                  onfocus="filterProductLibraryNames(this)"
+                  onblur="setTimeout(() => hideProductLibraryDropdown('${p.rawName.replace(/'/g, "\\'")}'), 200)"
+                  placeholder="Product..."
+                  id="product-name-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                  style="font-weight: 500; color: #667eea; width: 100%;"
+                  autocomplete="off"
+                />
+                <div id="suggestions-${p.rawName.replace(/[^a-zA-Z0-9]/g, '')}"
+                     class="product-name-suggestions"
+                     style="display: none; position: fixed; overflow-y: auto; background: white; border: 2px solid #667eea; border-radius: 4px; z-index: 9999; box-shadow: 0 8px 16px rgba(0,0,0,0.2);">
+                </div>
+                ${p.isCustom ? '<span class="edit-indicator" style="position: relative; z-index: 1;">✓</span>' : ''}
+              </td>
+              <td>
+                <input
+                  type="text"
+                  value="${p.brand || ''}"
+                  data-raw="${p.rawName}"
+                  data-field="brand"
+                  onchange="updateProductMapping(this)"
+                  placeholder="Brand..."
+                  style="font-size: 13px;"
+                />
+              </td>
+              <td>
+                <select
+                  data-raw="${p.rawName}"
+                  data-field="productType"
+                  onchange="updateProductMapping(this)"
+                  style="font-size: 13px; width: 100%;"
+                >
+                  <option value="">Select type...</option>
+                  ${categories.map(cat => `
+                    <option value="${cat}" ${p.productType === cat ? 'selected' : ''}>
+                      ${cat}
+                    </option>
+                  `).join('')}
+                </select>
+              </td>
+              <td>
+                <select
+                  data-raw="${p.rawName}"
+                  data-field="storeSection"
+                  onchange="updateProductMapping(this)"
+                  style="font-size: 13px; width: 100%;"
+                >
+                  ${STORE_CATEGORIES.map(cat => `
+                    <option value="${cat.id}" ${p.storeSection === cat.id ? 'selected' : ''}>
+                      ${cat.icon} ${cat.name}
+                    </option>
+                  `).join('')}
+                </select>
+              </td>
+              <td>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px;">
+                  ${productTags.length > 0 ? productTags.map(tag => `
+                    <span style="background: #667eea; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+                      ${tag}
+                      <span onclick="removeProductTagFromLibrary('${p.rawName.replace(/'/g, "\\'")}', '${tag}')" style="cursor: pointer; font-weight: bold;">&times;</span>
+                    </span>
+                  `).join('') : '<span style="font-size: 11px; color: #999;">—</span>'}
+                </div>
+                <input
+                  type="text"
+                  list="shared-tags-list"
+                  placeholder="Add tag..."
+                  data-raw-product="${p.rawName.replace(/"/g, '&quot;')}"
+                  onkeypress="if(event.key === 'Enter') { addProductTagFromLibrary(this); this.value = ''; }"
+                  style="font-size: 12px; padding: 4px 6px;"
+                />
+              </td>
+              <td>
+                <span class="product-count">${p.count}</span>
+                <div style="font-size: 11px; color: #999; margin-top: 4px;">${p.totalSpent.toFixed(0)} kr</div>
+              </td>
+            </tr>
+          `}).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  // Add scroll listener to hide dropdowns when scrolling
+  setTimeout(() => {
+    const scrollContainer = document.getElementById('product-library-scroll-container');
+    if (scrollContainer) {
+      scrollContainer.addEventListener('scroll', () => {
+        // Hide all visible dropdowns
+        document.querySelectorAll('.product-name-suggestions').forEach(dropdown => {
+          if (dropdown.style.display === 'block') {
+            dropdown.style.display = 'none';
+          }
+        });
+      });
+    }
+  }, 100);
+}
+
+// Product Library autocomplete functions
+function filterProductLibraryNames(inputElement) {
+  const rawName = inputElement.getAttribute('data-raw');
+  const inputValue = inputElement.value.toLowerCase().trim();
+  const sanitizedRaw = rawName.replace(/[^a-zA-Z0-9]/g, '');
+  const suggestionsDiv = document.getElementById(`suggestions-${sanitizedRaw}`);
+
+  if (!inputValue) {
+    suggestionsDiv.style.display = 'none';
+    return;
+  }
+
+  // Ensure product names cache is available (rebuild if needed)
+  if (productNamesCache.length === 0) {
+    rebuildProductLibraryCache();
+  }
+
+  // Use cached product names for fast filtering
+  const matchingNames = productNamesCache.filter(name =>
+    name.toLowerCase().includes(inputValue)
+  );
+
+  if (matchingNames.length === 0) {
+    suggestionsDiv.style.display = 'none';
+    return;
+  }
+
+  // Position dropdown using fixed positioning to avoid clipping
+  const rect = inputElement.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const dropdownMaxHeight = 200;
+  const spaceBelow = viewportHeight - rect.bottom;
+  const spaceAbove = rect.top;
+
+  // Decide whether to show dropdown above or below the input
+  const showAbove = spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
+
+  suggestionsDiv.style.position = 'fixed';
+  suggestionsDiv.style.left = rect.left + 'px';
+  suggestionsDiv.style.width = Math.max(rect.width, 250) + 'px';
+
+  if (showAbove) {
+    suggestionsDiv.style.bottom = (viewportHeight - rect.top) + 'px';
+    suggestionsDiv.style.top = 'auto';
+    suggestionsDiv.style.maxHeight = Math.min(spaceAbove - 10, dropdownMaxHeight) + 'px';
+  } else {
+    suggestionsDiv.style.top = rect.bottom + 'px';
+    suggestionsDiv.style.bottom = 'auto';
+    suggestionsDiv.style.maxHeight = Math.min(spaceBelow - 10, dropdownMaxHeight) + 'px';
+  }
+
+  // Show suggestions dropdown
+  suggestionsDiv.style.display = 'block';
+  suggestionsDiv.innerHTML = matchingNames.slice(0, 15).map(name => `
+    <div style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee;"
+         onmousedown="selectProductLibraryName('${rawName.replace(/'/g, "\\'")}', '${name.replace(/'/g, "\\'")}')"
+         onmouseover="this.style.background='#f0f0f0'"
+         onmouseout="this.style.background='white'">
+      ${name}
+    </div>
+  `).join('');
+}
+
+function selectProductLibraryName(rawName, selectedName) {
+  const sanitizedRaw = rawName.replace(/[^a-zA-Z0-9]/g, '');
+  const inputElement = document.getElementById(`product-name-${sanitizedRaw}`);
+  const suggestionsDiv = document.getElementById(`suggestions-${sanitizedRaw}`);
+
+  if (inputElement) {
+    inputElement.value = selectedName;
+    // Trigger the onchange event to save the mapping
+    inputElement.dispatchEvent(new Event('change'));
+  }
+
+  if (suggestionsDiv) {
+    suggestionsDiv.style.display = 'none';
+  }
+}
+
+function hideProductLibraryDropdown(rawName) {
+  const sanitizedRaw = rawName.replace(/[^a-zA-Z0-9]/g, '');
+  const suggestionsDiv = document.getElementById(`suggestions-${sanitizedRaw}`);
+  if (suggestionsDiv) {
+    suggestionsDiv.style.display = 'none';
+  }
+}
+
+// Update product mapping
+function updateProductMapping(element) {
+  const rawName = element.getAttribute('data-raw');
+  const field = element.getAttribute('data-field');
+  const value = element.value.trim();
+
+  if (!value && field !== 'brand') {
+    alert('Value cannot be empty');
+    renderProductLibrary();
+    return;
+  }
+
+  const customMappings = loadCustomMappings();
+
+  if (!customMappings[rawName]) {
+    // Initialize with new structure - get current UI values
+    const row = element.closest('tr');
+    const storeSectionSelect = row.querySelector('select[data-field="storeSection"]');
+
+    const brand = extractBrand(rawName);
+    const tempProductName = cleanProductName(rawName, brand);
+    const productName = suggestShoppingListName(tempProductName);
+    const productType = window.ProductCategories.getCategory(productName);
+
+    customMappings[rawName] = {
+      productName: productName,
+      brand: brand,
+      productType: productType,
+      storeSection: storeSectionSelect ? storeSectionSelect.value : mapProductTypeToStoreSection(productType)
+    };
+  }
+
+  // ALWAYS preserve the current storeSection from UI when changing ANY field
+  // This ensures user's manual store section choice is never lost
+  const row = element.closest('tr');
+  const storeSectionSelect = row.querySelector('select[data-field="storeSection"]');
+  if (storeSectionSelect && field !== 'storeSection') {
+    // Save current storeSection value before making any changes
+    customMappings[rawName].storeSection = storeSectionSelect.value;
+  }
+
+  customMappings[rawName][field] = value;
+
+  saveCustomMappings(customMappings);
+
+  // If this is a productType field and it's a new category, add it to custom categories
+  if (field === 'productType') {
+    const allCategories = getAllCategories();
+    if (!allCategories.includes(value)) {
+      const customCategories = loadCustomCategories();
+      customCategories.push(value);
+      saveCustomCategories(customCategories);
+    }
+  }
+
+  // PERFORMANCE OPTIMIZATION: No immediate refresh needed for any field changes
+  // All changes (productName, productType, brand, storeSection) are saved to localStorage
+  // and will be reflected when analysis is next loaded or tab is switched
+  // This provides instant editing experience without expensive re-renders
+
+  // Just update the visual indicator if needed
+  if (true) {
+    // Just update the visual indicator if needed
+    if (!element.nextElementSibling || !element.nextElementSibling.classList?.contains('edit-indicator')) {
+      const indicator = document.createElement('span');
+      indicator.className = 'edit-indicator';
+      indicator.style.cssText = 'position: relative; z-index: 1;';
+      indicator.textContent = '✓';
+      element.parentElement.insertBefore(indicator, element.nextSibling);
+    }
+  }
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+  // Run data migration on page load
+  console.log('Checking for old data structure...');
+  const wasMigrated = migrateOldDataStructure();
+  if (wasMigrated) {
+    console.log('✅ Data migrated successfully!');
+    showMessage('Data structure updated! Refresh the page to see changes.', 'success');
+  }
+
+  // Setup product search handler
+  const searchInput = document.getElementById('productSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      renderProductLibrary(e.target.value);
+    });
+  }
+
+  // Render shopping list if there are items
+  const list = loadShoppingList();
+  if (list.length > 0) {
+    renderShoppingList();
+  }
+
+  // v3.0: Suggestions are generated in window.load after receipts are loaded
+});
+
+// Handle adding a new category
+function handleAddCategory() {
+  const input = document.getElementById('newCategoryInput');
+  const categoryName = input.value.trim();
+
+  if (addCustomCategory(categoryName)) {
+    input.value = '';
+    const hint = document.getElementById('categoryHint');
+    hint.innerHTML = `✓ Product Type "<strong>${categoryName}</strong>" added! You can now assign products to it.`;
+    hint.style.color = '#28a745';
+    setTimeout(() => {
+      hint.innerHTML = 'Type a new product type name and click Add. You can then assign products to your custom types.';
+      hint.style.color = '#666';
+    }, 3000);
+
+    // Refresh the product library to show updated categories
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+// Show category management modal
+function showCategoryManager() {
+  const allCategories = getAllCategories();
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>📁 Product Type Management</h2>
+    <p style="color: #666; margin-bottom: 20px;">Edit or delete any product type. Changes will update all products using that type.</p>
+
+    <!-- Clear All Assignments Button -->
+    <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;">
+      <h3 style="margin-top: 0; color: #856404;">⚠️ Clear All Product Type Assignments</h3>
+      <p style="color: #856404; margin-bottom: 10px;">
+        This will remove ALL product type assignments from all products. You'll need to reassign each product to your new types.
+      </p>
+      <button
+        class="reset-btn"
+        onclick="clearAllProductTypes()"
+        style="background: #dc3545; color: white; font-weight: bold;"
+      >
+        🗑️ Clear All Product Types
+      </button>
+    </div>
+
+    <div style="margin: 20px 0;">
+      <h3>All Product Types (${allCategories.length})</h3>
+      <div style="margin-top: 10px; max-height: 500px; overflow-y: auto;">
+        ${allCategories.map(cat => `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
+            <span style="font-weight: 500;">${cat}</span>
+            <div style="display: flex; gap: 8px;">
+              <button
+                class="btn"
+                onclick="handleRenameCategory('${cat.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Rename this product type"
+              >✏️ Rename</button>
+              <button
+                class="reset-btn"
+                onclick="handleDeleteCategory('${cat.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Delete this product type"
+              >🗑️ Delete</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Clear all product type assignments
+function clearAllProductTypes() {
+  if (!confirm('⚠️ WARNING: This will remove ALL product type assignments from ALL products!\n\nYou will need to manually reassign each product to your new types.\n\nAre you sure you want to continue?')) {
+    return;
+  }
+
+  console.log('=== CLEARING ALL PRODUCT TYPES ===');
+  const customMappings = loadCustomMappings();
+  console.log('Total products in custom mappings:', Object.keys(customMappings).length);
+
+  let clearedCount = 0;
+  let skippedCount = 0;
+
+  Object.keys(customMappings).forEach(rawName => {
+    console.log(`Checking ${rawName}:`, customMappings[rawName]);
+
+    if (customMappings[rawName].productType) {
+      console.log(`  - Has productType: "${customMappings[rawName].productType}" - CLEARING`);
+      delete customMappings[rawName].productType;
+      // Also clear storeSection since it depends on productType
+      if (customMappings[rawName].storeSection) {
+        console.log(`  - Has storeSection: "${customMappings[rawName].storeSection}" - CLEARING`);
+        delete customMappings[rawName].storeSection;
+      }
+      clearedCount++;
+    } else {
+      console.log(`  - No productType found - SKIPPING`);
+      skippedCount++;
+    }
+  });
+
+  console.log(`Cleared: ${clearedCount}, Skipped: ${skippedCount}`);
+
+  if (clearedCount === 0) {
+    alert('No product types to clear.\n\nYour products may already have empty product types, or you may not have any custom mappings yet.');
+    console.log('⚠️ No product types were cleared');
+    return;
+  }
+
+  saveCustomMappings(customMappings);
+  console.log('✓ Saved updated mappings to localStorage');
+
+  // Verify it was saved
+  const verifyMappings = loadCustomMappings();
+  const remainingTypes = Object.keys(verifyMappings).filter(k => verifyMappings[k].productType);
+  console.log('Verification - Products still with productType:', remainingTypes.length);
+  if (remainingTypes.length > 0) {
+    console.log('⚠️ WARNING: Some products still have productType:', remainingTypes);
+  }
+
+  alert(`✅ Cleared product types from ${clearedCount} products!\n\nGo to Product Library to reassign them to your new types.`);
+
+  closeModal();
+  renderProductLibrary(document.getElementById('productSearch')?.value || '');
+  console.log('=== CLEAR COMPLETE ===');
+}
+
+// Export custom data to JSON file
+function exportCustomData() {
+  const exportData = {
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    customProductMappings: loadCustomMappings(),
+    customCategories: loadCustomCategories()
+  };
+
+  const dataStr = JSON.stringify(exportData, null, 2);
+  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(dataBlob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `grocery-data-backup-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  alert(`✅ Data exported successfully!\n\nFile: ${link.download}\n\nThis includes:\n• ${Object.keys(exportData.customProductMappings).length} custom product mappings\n• ${exportData.customCategories.length} custom categories\n• All tags`);
+}
+
+// Import custom data from JSON file
+function importCustomData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const importData = JSON.parse(e.target.result);
+
+      // Validate the data structure
+      if (!importData.version || !importData.customProductMappings || !importData.customCategories) {
+        throw new Error('Invalid backup file format');
+      }
+
+      // Confirm before overwriting
+      const mappingsCount = Object.keys(importData.customProductMappings).length;
+      const categoriesCount = importData.customCategories.length;
+
+      if (!confirm(`Import data from backup?\n\nThis will import:\n• ${mappingsCount} product mappings\n• ${categoriesCount} custom categories\n• All associated tags\n\nYour current custom data will be merged with the imported data.`)) {
+        event.target.value = ''; // Reset file input
+        return;
+      }
+
+      // Merge custom mappings (imported data takes precedence)
+      const currentMappings = loadCustomMappings();
+      const mergedMappings = { ...currentMappings, ...importData.customProductMappings };
+      localStorage.setItem('customProductMappings_v2', JSON.stringify(mergedMappings));
+
+      // Merge custom categories (avoid duplicates)
+      const currentCategories = loadCustomCategories();
+      const allCategories = [...new Set([...currentCategories, ...importData.customCategories])];
+      localStorage.setItem('customCategories_v2', JSON.stringify(allCategories));
+
+      // Refresh the display
+      if (allReceipts.length > 0) {
+        refreshAnalysis();
+      }
+      renderProductLibrary(document.getElementById('productSearch')?.value || '');
+
+      alert(`✅ Data imported successfully!\n\nImported:\n• ${mappingsCount} product mappings\n• ${categoriesCount} custom categories\n\nYour Product Library has been updated.`);
+
+    } catch (error) {
+      alert(`❌ Error importing data:\n\n${error.message}\n\nPlease make sure you're using a valid backup file.`);
+      console.error('Import error:', error);
+    }
+
+    // Reset file input
+    event.target.value = '';
+  };
+
+  reader.readAsText(file);
+}
+
+// ========================================
+// QUALITY CHECK AGENT
+// ========================================
+
+// Store suggestions globally for access by action functions
+let currentQualitySuggestions = [];
+
+// Load ignored suggestions from localStorage
+function loadIgnoredSuggestions() {
+  const saved = localStorage.getItem('ignoredQualitySuggestions');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save ignored suggestions to localStorage
+function saveIgnoredSuggestions(ignored) {
+  localStorage.setItem('ignoredQualitySuggestions', JSON.stringify(ignored));
+}
+
+// Check if a suggestion should be ignored
+function isSuggestionIgnored(rawName, suggestionType) {
+  const ignored = loadIgnoredSuggestions();
+  return ignored[rawName] && ignored[rawName].includes(suggestionType);
+}
+
+// Add a suggestion to ignored list
+function addIgnoredSuggestion(rawName, suggestionType) {
+  const ignored = loadIgnoredSuggestions();
+  if (!ignored[rawName]) {
+    ignored[rawName] = [];
+  }
+  if (!ignored[rawName].includes(suggestionType)) {
+    ignored[rawName].push(suggestionType);
+  }
+  saveIgnoredSuggestions(ignored);
+}
+
+// Clear all ignored suggestions
+function clearIgnoredSuggestions() {
+  if (!confirm('Clear all ignored suggestions?\n\nThis will show all previously ignored suggestions in the next scan.')) {
+    return;
+  }
+
+  localStorage.removeItem('ignoredQualitySuggestions');
+  localStorage.removeItem('allowedSectionCombinations');
+  showMessage('All ignored suggestions cleared', 'success');
+  console.log('Cleared all ignored suggestions');
+}
+
+// Load allowed section combinations (pattern learning)
+function loadAllowedSectionCombinations() {
+  const saved = localStorage.getItem('allowedSectionCombinations');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// Save allowed section combinations
+function saveAllowedSectionCombinations(allowed) {
+  localStorage.setItem('allowedSectionCombinations', JSON.stringify(allowed));
+}
+
+// Add an allowed productType + storeSection combination (pattern learning)
+function allowSectionCombination(productType, storeSection) {
+  const key = `${productType}_${storeSection}`;
+  const allowed = loadAllowedSectionCombinations();
+  allowed[key] = true;
+  saveAllowedSectionCombinations(allowed);
+  console.log(`✓ Learned pattern: "${productType}" in "${storeSection}" is OK`);
+}
+
+// Check if a productType + storeSection combination is allowed
+function isSectionCombinationAllowed(productType, storeSection) {
+  const key = `${productType}_${storeSection}`;
+  const allowed = loadAllowedSectionCombinations();
+  return allowed[key] === true;
+}
+
+// Main scanner function
+function scanProductQuality(products) {
+  const suggestions = [];
+  const productNameCounts = {};
+
+  // Count similar product names for inconsistency detection
+  products.forEach(p => {
+    const normalized = p.productName?.toLowerCase().trim();
+    if (normalized) {
+      productNameCounts[normalized] = (productNameCounts[normalized] || 0) + 1;
+    }
+  });
+
+  products.forEach(product => {
+    // Issue 1: Missing brand (shows ALL products without brands)
+    const missingBrand = detectMissingBrand(product);
+    if (missingBrand && !isSuggestionIgnored(product.rawName, missingBrand.type)) {
+      suggestions.push(missingBrand);
+    }
+
+    // Issue 2: Brand still in product name
+    const brandInName = detectBrandInProductName(product);
+    if (brandInName && !isSuggestionIgnored(product.rawName, brandInName.type)) {
+      suggestions.push(brandInName);
+    }
+
+    // Issue 3: Size/weight still in product name (DISABLED)
+    const sizeInName = detectSizeInProductName(product);
+    if (sizeInName && !isSuggestionIgnored(product.rawName, sizeInName.type)) {
+      suggestions.push(sizeInName);
+    }
+
+    // Issue 4: Wrong product type (category)
+    const wrongCategory = detectWrongCategory(product);
+    if (wrongCategory && !isSuggestionIgnored(product.rawName, wrongCategory.type)) {
+      suggestions.push(wrongCategory);
+    }
+
+    // Issue 5: Store section mismatch - DISABLED (too complex, user will handle manually)
+    // const sectionMismatch = detectStoreSectionMismatch(product);
+    // if (sectionMismatch && !isSuggestionIgnored(product.rawName, sectionMismatch.type)) {
+    //   suggestions.push(sectionMismatch);
+    // }
+
+    // Issue 6: Product name too similar to raw name (not cleaned enough)
+    const notCleaned = detectNotCleanedEnough(product);
+    if (notCleaned && !isSuggestionIgnored(product.rawName, notCleaned.type)) {
+      suggestions.push(notCleaned);
+    }
+
+    // Issue 7: Product name too specific (could be simplified for shopping list)
+    const tooSpecific = detectOverlySpecificProductName(product);
+    if (tooSpecific && !isSuggestionIgnored(product.rawName, tooSpecific.type)) {
+      suggestions.push(tooSpecific);
+    }
+
+    // Issue 8: Product name capitalization inconsistency
+    const capitalizationIssue = detectCapitalizationIssues(product);
+    if (capitalizationIssue && !isSuggestionIgnored(product.rawName, capitalizationIssue.type)) {
+      suggestions.push(capitalizationIssue);
+    }
+
+    // Issue 9: Brand capitalization inconsistency
+    const brandCapIssue = detectBrandCapitalizationIssues(product);
+    if (brandCapIssue && !isSuggestionIgnored(product.rawName, brandCapIssue.type)) {
+      suggestions.push(brandCapIssue);
+    }
+
+    // Issue 10: Product Type "Other" should be "övrigt"
+    const otherProductType = detectOtherProductType(product);
+    if (otherProductType && !isSuggestionIgnored(product.rawName, otherProductType.type)) {
+      suggestions.push(otherProductType);
+    }
+  });
+
+  // Sort by confidence (High -> Medium -> Low)
+  suggestions.sort((a, b) => {
+    const order = { high: 0, medium: 1, low: 2 };
+    return order[a.confidence] - order[b.confidence];
+  });
+
+  return suggestions;
+}
+
+// Detect missing brand
+function detectMissingBrand(product) {
+  if (product.brand) return null; // Already has brand
+
+  const upperRaw = product.rawName.toUpperCase();
+
+  // First, try to detect brand from raw name (HIGH confidence)
+  for (const brand of ALL_BRANDS) {
+    const regex = new RegExp(`\\b${brand}\\b`, 'i');
+    if (regex.test(upperRaw)) {
+      return {
+        type: 'missing_brand',
+        rawName: product.rawName,
+        current: { brand: product.brand || '(empty)' },
+        suggested: { brand: brand },
+        reason: `Found "${brand}" in receipt name but brand field is empty`,
+        confidence: 'high'
+      };
+    }
+  }
+
+  // If we can't detect brand, still show it as needing manual entry (LOW confidence)
+  return {
+    type: 'missing_brand_manual',
+    rawName: product.rawName,
+    current: { brand: '(empty)' },
+    suggested: { brand: '(manual entry needed)' },
+    reason: 'Brand field is empty - add brand manually for better tracking',
+    confidence: 'low',
+    requiresManualEntry: true
+  };
+}
+
+// Detect brand still in product name
+function detectBrandInProductName(product) {
+  if (!product.brand || !product.productName) return null;
+
+  // Skip very short brands (2 chars or less) to avoid false positives
+  // e.g., "na" matching in "gröna" where ö breaks word boundary
+  if (product.brand.length <= 2) return null;
+
+  const regex = new RegExp(`\\b${product.brand}\\b`, 'i');
+  if (regex.test(product.productName)) {
+    const cleaned = product.productName.replace(regex, '').replace(/\s+/g, ' ').trim();
+    if (cleaned && cleaned !== product.productName) {
+      return {
+        type: 'brand_in_name',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: cleaned },
+        reason: `Product name contains brand "${product.brand}" - should be removed for generic naming`,
+        confidence: 'high'
+      };
+    }
+  }
+  return null;
+}
+
+// Detect size/weight in product name
+function detectSizeInProductName(product) {
+  // DISABLED: Sizes are important for price tracking (200G vs 400G have different prices)
+  // User preference: keep sizes in product names for accurate price comparison
+  return null;
+}
+
+// Detect wrong category (e.g., cooking oil as Personal Care)
+function detectWrongCategory(product) {
+  if (!product.productName || !product.productType) return null;
+
+  const lowerName = product.productName.toLowerCase();
+  const lowerRaw = product.rawName.toLowerCase();
+  const brand = product.brand ? product.brand.toUpperCase() : '';
+
+  // Check if it's hair/beauty oil (NOT cooking oil)
+  const isHairBeautyOil =
+    lowerName.includes('hair') || lowerName.includes('hår') ||
+    lowerName.includes('elixir') || lowerName.includes('serum') ||
+    lowerName.includes('beauty') || lowerName.includes('skönhet') ||
+    lowerRaw.includes('hair') || lowerRaw.includes('hår') ||
+    (SWEDISH_BRANDS.personalCare && SWEDISH_BRANDS.personalCare.includes(brand));
+
+  // Check if it's cooking oil
+  const isCookingOil =
+    SWEDISH_BRANDS.oil && SWEDISH_BRANDS.oil.includes(brand) ||
+    lowerName.includes('rapsolja') || lowerName.includes('olivolja') ||
+    lowerName.includes('rapeseed') || lowerName.includes('olive oil') ||
+    lowerName.includes('canola') || lowerName.includes('vegetable oil');
+
+  // Oil products: cooking oils should be Pantry, hair/beauty oils should stay in Personal Care
+  if ((lowerName.includes('olja') || lowerName.includes('oil')) &&
+      product.productType === 'Personal Care') {
+
+    // If it's clearly a hair/beauty product, Personal Care is CORRECT - no suggestion
+    if (isHairBeautyOil) {
+      return null;
+    }
+
+    // If it's clearly cooking oil, suggest Pantry
+    if (isCookingOil) {
+      return {
+        type: 'wrong_category',
+        rawName: product.rawName,
+        current: { productType: product.productType },
+        suggested: { productType: 'Pantry - Sauces' },
+        reason: 'Cooking oils should be categorized as Pantry, not Personal Care',
+        confidence: 'high'
+      };
+    }
+
+    // If unclear, suggest with LOW confidence
+    return {
+      type: 'wrong_category',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: 'Pantry - Sauces' },
+      reason: 'Oil product - might be cooking oil? (Check if it\'s hair/beauty oil)',
+      confidence: 'low'
+    };
+  }
+
+  // Vitamins/supplements are Personal Care, not Food
+  if ((lowerName.includes('vitamin') || lowerName.includes('supplement')) &&
+      product.productType.includes('Pantry')) {
+    return {
+      type: 'wrong_category',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: 'Personal Care' },
+      reason: 'Vitamins/supplements should be Personal Care',
+      confidence: 'medium'
+    };
+  }
+
+  // More detection rules can be added here
+  return null;
+}
+
+// Detect store section mismatch
+function detectStoreSectionMismatch(product) {
+  if (!product.productType || !product.storeSection) return null;
+
+  const expectedSection = mapProductTypeToStoreSection(product.productType);
+  if (expectedSection !== product.storeSection) {
+    // Check if user has already confirmed this combination is OK (pattern learning)
+    if (isSectionCombinationAllowed(product.productType, product.storeSection)) {
+      // User previously said this is fine - don't suggest
+      return null;
+    }
+
+    const expectedName = STORE_CATEGORIES.find(c => c.id === expectedSection)?.name || expectedSection;
+    const currentName = STORE_CATEGORIES.find(c => c.id === product.storeSection)?.name || product.storeSection;
+
+    return {
+      type: 'section_mismatch',
+      rawName: product.rawName,
+      productType: product.productType,  // Store for pattern learning
+      storeSection: product.storeSection,  // Store for pattern learning
+      current: { storeSection: product.storeSection },
+      suggested: { storeSection: expectedSection },
+      reason: `Product Type "${product.productType}" usually maps to "${expectedName}", but it's in "${currentName}"`,
+      confidence: 'low'
+    };
+  }
+  return null;
+}
+
+// Detect product name not cleaned enough (too similar to raw)
+function detectNotCleanedEnough(product) {
+  if (!product.productName || !product.rawName) return null;
+
+  // Skip if custom mapping exists (user intentionally set it)
+  const customMappings = loadCustomMappings();
+  if (customMappings[product.rawName]?.productName) return null;
+
+  const similarity = stringSimilarity(
+    product.productName.toLowerCase(),
+    product.rawName.toLowerCase()
+  );
+
+  // If 80%+ similar, product name might need more cleaning
+  if (similarity > 0.8 && product.rawName.length > 10) {
+    const betterName = suggestShoppingListName(
+      cleanProductName(product.rawName, product.brand)
+    );
+
+    if (betterName && betterName !== product.productName) {
+      return {
+        type: 'not_cleaned',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: betterName },
+        reason: 'Product name is too similar to receipt name - could be more generic',
+        confidence: 'low'
+      };
+    }
+  }
+  return null;
+}
+
+// Calculate string similarity (0-1)
+function stringSimilarity(str1, str2) {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  if (longer.length === 0) return 1.0;
+
+  const editDistance = levenshteinDistance(longer, shorter);
+  return (longer.length - editDistance) / longer.length;
+}
+
+// Levenshtein distance
+function levenshteinDistance(str1, str2) {
+  const matrix = [];
+
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[str2.length][str1.length];
+}
+
+// Detect overly specific product names that could be simplified for shopping lists
+function detectOverlySpecificProductName(product) {
+  if (!product.productName) return null;
+
+  // Skip if custom mapping exists (user intentionally set it)
+  const customMappings = loadCustomMappings();
+  if (customMappings[product.rawName]?.productName) return null;
+
+  const lowerName = product.productName.toLowerCase();
+
+  // Pattern 1: Milk variants (Standardmjölk, Mellanmjölk, Minimjölk → MJÖLK)
+  const milkVariants = [
+    { pattern: /^standard\s*mj[öo]lk/i, base: 'MJÖLK', type: 'standard milk (3%)' },
+    { pattern: /^mellan\s*mj[öo]lk/i, base: 'MJÖLK', type: 'medium milk (1.5%)' },
+    { pattern: /^mini\s*mj[öo]lk/i, base: 'MJÖLK', type: 'mini milk (0.5%)' },
+    { pattern: /^l[äa]tt\s*mj[öo]lk/i, base: 'MJÖLK', type: 'light milk' },
+    { pattern: /^laktosfri\s*mj[öo]lk/i, base: 'MJÖLK LAKTOSFRI', type: 'lactose-free milk (may be different product)' },
+    { pattern: /^mj[öo]lk\s+[\d,]+%/i, base: 'MJÖLK', type: 'milk with fat %' }
+  ];
+
+  for (const variant of milkVariants) {
+    if (variant.pattern.test(lowerName)) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: variant.base },
+        reason: `Milk fat % variants are usually interchangeable for shopping lists. Consider "${variant.base}" to group all milk types. Keep specific if you ONLY buy ${variant.type}.`,
+        confidence: 'low'
+      };
+    }
+  }
+
+  // Pattern 2: Fat percentages in other products
+  if (lowerName.match(/\s+[\d,]+%\s*$/)) {
+    const withoutPercent = product.productName.replace(/\s+[\d,]+%\s*$/i, '').trim();
+    if (withoutPercent && withoutPercent !== product.productName) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: withoutPercent },
+        reason: 'Fat % might not matter for shopping lists (e.g., "Ost 17%" → "OST"). Keep specific if you need this exact fat %.',
+        confidence: 'low'
+      };
+    }
+  }
+
+  // Pattern 3: "Naturell" variants (but NOT Greek/Turkish yogurt - those are different!)
+  if (lowerName.includes('naturell') && !lowerName.includes('yoghurt') && !lowerName.includes('yogurt')) {
+    const withoutNaturell = product.productName.replace(/\s*naturell\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (withoutNaturell && withoutNaturell !== product.productName) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: withoutNaturell },
+        reason: '"Naturell" might not matter for shopping lists. Keep if you specifically need plain/natural variant.',
+        confidence: 'low'
+      };
+    }
+  }
+
+  // Pattern 4: "Ekologisk" / "Organic" (user might want to track separately)
+  if (lowerName.includes('ekologisk') || lowerName.includes('eko ')) {
+    const withoutEko = product.productName
+      .replace(/\s*ekologisk\s*/gi, ' ')
+      .replace(/\s+eko\s+/gi, ' ')
+      .replace(/^eko\s+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (withoutEko && withoutEko !== product.productName) {
+      return {
+        type: 'overly_specific',
+        rawName: product.rawName,
+        current: { productName: product.productName },
+        suggested: { productName: withoutEko },
+        reason: 'Remove "Ekologisk" if organic/non-organic are interchangeable for your shopping. Keep if you specifically buy organic.',
+        confidence: 'low'
+      };
+    }
+  }
+
+  return null;
+}
+
+// Detect capitalization inconsistencies (e.g., "Prästost" vs "prästost" vs "Präst")
+function detectCapitalizationIssues(product) {
+  if (!product.productName) return null;
+
+  const name = product.productName;
+  const lower = name.toLowerCase();
+
+  // Check if product name has uppercase letters (should be lowercase for consistency)
+  const hasUpperCase = /[A-ZÅÄÖ]/.test(name);
+
+  if (hasUpperCase) {
+    return {
+      type: 'capitalization',
+      rawName: product.rawName,
+      current: { productName: product.productName },
+      suggested: { productName: lower },
+      reason: 'Product names should be lowercase for consistency (easier to search and group). Brands are stored separately.',
+      confidence: 'high'
+    };
+  }
+
+  return null;
+}
+
+// Detect brand capitalization inconsistencies
+function detectBrandCapitalizationIssues(product) {
+  if (!product.brand || product.brand.length === 0) return null;
+
+  const brand = product.brand;
+  const lower = brand.toLowerCase();
+
+  // Check if brand is NOT lowercase (brands should be lowercase for consistency)
+  const hasUpperCase = brand !== lower;
+
+  if (hasUpperCase) {
+    return {
+      type: 'brand_capitalization',
+      rawName: product.rawName,
+      current: { brand: product.brand },
+      suggested: { brand: lower },
+      reason: 'Brand names should be lowercase for consistency (e.g., "arla", "valio", "zeta").',
+      confidence: 'high'
+    };
+  }
+
+  return null;
+}
+
+// Detect Product Type "Other" that should be "övrigt" or capitalization issues
+function detectOtherProductType(product) {
+  if (!product.productType) return null;
+
+  // Check if product type is "Other" (case-insensitive)
+  if (product.productType.toLowerCase() === 'other') {
+    return {
+      type: 'other_product_type',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: 'övrigt' },
+      reason: 'Product Type "Other" should be changed to "övrigt" for Swedish consistency.',
+      confidence: 'high'
+    };
+  }
+
+  // Check if product type has uppercase letters (should be lowercase for consistency)
+  const lower = product.productType.toLowerCase();
+  if (product.productType !== lower) {
+    return {
+      type: 'productType_capitalization',
+      rawName: product.rawName,
+      current: { productType: product.productType },
+      suggested: { productType: lower },
+      reason: 'Product Type should be lowercase for consistency (e.g., "snacks" not "Snacks").',
+      confidence: 'high'
+    };
+  }
+
+  return null;
+}
+
+// Show quality check modal with suggestions
+function showQualityCheckModal(suggestions) {
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  const highCount = suggestions.filter(s => s.confidence === 'high').length;
+  const mediumCount = suggestions.filter(s => s.confidence === 'medium').length;
+  const lowCount = suggestions.filter(s => s.confidence === 'low').length;
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🤖 Quality Check Results</h2>
+
+    <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+      <strong>Found ${suggestions.length} suggestions:</strong>
+      <div style="margin-top: 10px; display: flex; gap: 15px;">
+        <span style="color: #d32f2f;">● High: ${highCount}</span>
+        <span style="color: #f57c00;">● Medium: ${mediumCount}</span>
+        <span style="color: #1976d2;">● Low: ${lowCount}</span>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+      <button onclick="applyAllHighConfidence()" class="btn" style="background: #d32f2f; color: white;">
+        ⚡ Apply All High Confidence (${highCount})
+      </button>
+      <button onclick="closeModal()" class="btn" style="background: #6c757d;">
+        Done
+      </button>
+    </div>
+
+    <div style="max-height: 60vh; overflow-y: auto;">
+      ${suggestions.map((sug, index) => renderSuggestion(sug, index)).join('')}
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+}
+
+// Render a single suggestion
+function renderSuggestion(sug, index) {
+  const confidenceColors = {
+    high: { bg: '#ffebee', border: '#d32f2f', text: '#d32f2f' },
+    medium: { bg: '#fff3e0', border: '#f57c00', text: '#f57c00' },
+    low: { bg: '#e3f2fd', border: '#1976d2', text: '#1976d2' }
+  };
+
+  const colors = confidenceColors[sug.confidence];
+
+  // Build current vs suggested display
+  const fields = Object.keys(sug.suggested);
+  const changesHtml = fields.map(field => {
+    const currentVal = sug.current[field] || '(empty)';
+    const suggestedVal = sug.suggested[field];
+
+    return `
+      <div style="margin: 8px 0;">
+        <strong>${field}:</strong>
+        <div style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+          <span style="flex: 1; padding: 6px; background: #f5f5f5; border-radius: 4px; font-family: monospace; font-size: 13px;">
+            ${currentVal}
+          </span>
+          <span style="color: #666;">→</span>
+          <span style="flex: 1; padding: 6px; background: #e8f5e9; border-radius: 4px; font-family: monospace; font-size: 13px; font-weight: 500;">
+            ${suggestedVal}
+          </span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div id="suggestion-${index}" style="background: ${colors.bg}; border-left: 4px solid ${colors.border}; padding: 15px; margin-bottom: 15px; border-radius: 4px;">
+      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+        <div style="flex: 1;">
+          <div style="font-weight: bold; font-size: 14px; color: ${colors.text}; text-transform: uppercase; margin-bottom: 5px;">
+            ${sug.confidence} CONFIDENCE
+          </div>
+          <div style="font-family: monospace; font-size: 12px; color: #666; margin-bottom: 8px;">
+            Receipt: ${sug.rawName}
+          </div>
+          <div style="font-size: 13px; color: #555; font-style: italic;">
+            ${sug.reason}
+          </div>
+        </div>
+      </div>
+
+      ${changesHtml}
+
+      <div style="display: flex; gap: 8px; margin-top: 12px;">
+        ${sug.requiresManualEntry ? `
+          <button onclick="editSuggestion('${sug.rawName.replace(/'/g, "\\'")}', ${index})" class="btn" style="background: #2196F3; color: white; padding: 8px 20px; font-size: 14px; font-weight: bold;">
+            ✏️ Add Brand Manually
+          </button>
+          <button onclick="ignoreSuggestion(${index})" class="btn" style="background: #6c757d; color: white; padding: 6px 16px; font-size: 13px;">
+            ✗ Ignore
+          </button>
+        ` : `
+          <button onclick="applySuggestion(${index})" class="btn" style="background: #28a745; color: white; padding: 6px 16px; font-size: 13px;">
+            ✓ Apply
+          </button>
+          <button onclick="ignoreSuggestion(${index})" class="btn" style="background: #6c757d; color: white; padding: 6px 16px; font-size: 13px;">
+            ✗ Ignore
+          </button>
+          <button onclick="editSuggestion('${sug.rawName.replace(/'/g, "\\'")}', ${index})" class="btn" style="background: #ffc107; color: #000; padding: 6px 16px; font-size: 13px;">
+            ✏️ Edit
+          </button>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// Run quality check on all products
+function runQualityCheck() {
+  const products = buildProductLibrary();
+
+  if (products.length === 0) {
+    showMessage('No products to check. Upload receipts first!', 'info');
+    return;
+  }
+
+  document.getElementById('quality-check-status').textContent = '⏳ Scanning...';
+
+  setTimeout(() => {
+    const suggestions = scanProductQuality(products);
+    currentQualitySuggestions = suggestions;  // Store globally
+
+    document.getElementById('quality-check-status').textContent =
+      suggestions.length > 0 ? `Found ${suggestions.length} suggestions` : '✅ All good!';
+
+    if (suggestions.length > 0) {
+      showQualityCheckModal(suggestions);
+    } else {
+      alert('✅ Quality Check Complete!\n\nNo issues found. Your product library looks good!');
+    }
+  }, 100);
+}
+
+// Apply a single suggestion
+function applySuggestion(index) {
+  try {
+    console.log('=== APPLY SUGGESTION START ===');
+    console.log('Index:', index);
+
+    if (!currentQualitySuggestions[index]) {
+      console.error('Suggestion not found:', index);
+      alert('Error: Suggestion not found');
+      return;
+    }
+
+    const sug = currentQualitySuggestions[index];
+    console.log('Applying changes to:', sug.rawName, sug.suggested);
+
+    const customMappings = loadCustomMappings();
+
+    if (!customMappings[sug.rawName]) {
+      customMappings[sug.rawName] = {};
+    }
+
+    // Apply all suggested fields
+    Object.keys(sug.suggested).forEach(field => {
+      customMappings[sug.rawName][field] = sug.suggested[field];
+      console.log(`  ${field}: ${sug.suggested[field]}`);
+    });
+
+    saveCustomMappings(customMappings);
+    console.log('✓ Changes saved to localStorage');
+
+    // Show immediate feedback toast
+    console.log('Showing toast message...');
+    showMessage(`✓ Applied changes to "${sug.rawName}"`, 'success');
+    console.log('Toast message called');
+
+    // Remove from list and update UI
+    const element = document.getElementById(`suggestion-${index}`);
+    console.log('Element found:', element ? 'YES' : 'NO');
+
+    if (element) {
+      // Immediate visual feedback
+      console.log('Applying visual feedback...');
+      element.style.transition = 'all 0.3s ease';
+      element.style.opacity = '0.5';
+      element.style.transform = 'scale(0.95)';
+      element.style.background = '#d4edda';
+      element.innerHTML = `
+        <div style="padding: 30px; text-align: center;">
+          <div style="font-size: 48px; margin-bottom: 10px;">✓</div>
+          <div style="font-size: 16px; color: #155724; font-weight: bold;">Applied!</div>
+        </div>
+      `;
+      console.log('Visual feedback applied');
+
+      setTimeout(() => {
+        element.style.opacity = '0';
+        setTimeout(() => {
+          element.remove();
+
+          // Check if all suggestions handled
+          const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+          if (remaining === 0) {
+            showMessage('All suggestions reviewed!', 'success');
+            setTimeout(() => {
+              closeModal();
+              renderProductLibrary(document.getElementById('productSearch')?.value || '');
+            }, 500);
+          }
+        }, 300);
+      }, 800);
+    } else {
+      console.error('Element not found:', `suggestion-${index}`);
+      alert('Error: Could not find suggestion element on page');
+    }
+
+    // Refresh product library immediately so changes show if modal is closed
+    console.log('Refreshing product library...');
+    renderProductLibrary(document.getElementById('productSearch')?.value || '');
+    console.log('=== APPLY SUGGESTION END ===');
+
+  } catch (error) {
+    console.error('ERROR in applySuggestion:', error);
+    alert('Error applying suggestion: ' + error.message);
+  }
+}
+
+// Ignore a suggestion
+function ignoreSuggestion(index) {
+  console.log('Ignoring suggestion', index);
+
+  if (!currentQualitySuggestions[index]) {
+    console.error('Suggestion not found:', index);
+    return;
+  }
+
+  const sug = currentQualitySuggestions[index];
+
+  // Save this as ignored so it won't show up next time
+  console.log(`Saving as ignored: ${sug.rawName} - ${sug.type}`);
+  addIgnoredSuggestion(sug.rawName, sug.type);
+
+  // PATTERN LEARNING: If this is a section_mismatch, learn the pattern
+  if (sug.type === 'section_mismatch' && sug.productType && sug.storeSection) {
+    allowSectionCombination(sug.productType, sug.storeSection);
+    showMessage(`✓ Learned: "${sug.productType}" in "${sug.storeSection}" is OK`, 'success');
+  } else {
+    showMessage(`Ignored suggestion for "${sug.rawName}"`, 'info');
+  }
+
+  const element = document.getElementById(`suggestion-${index}`);
+  if (element) {
+    // Immediate visual feedback
+    element.style.transition = 'all 0.3s ease';
+    element.style.opacity = '0.4';
+    element.style.transform = 'scale(0.95)';
+    element.style.background = '#f8f9fa';
+    element.innerHTML = `
+      <div style="padding: 30px; text-align: center;">
+        <div style="font-size: 48px; margin-bottom: 10px;">✗</div>
+        <div style="font-size: 16px; color: #666; font-weight: bold;">Ignored</div>
+      </div>
+    `;
+
+    setTimeout(() => {
+      element.style.opacity = '0';
+      setTimeout(() => {
+        element.remove();
+
+        const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+        if (remaining === 0) {
+          showMessage('All suggestions reviewed!', 'success');
+          setTimeout(() => {
+            closeModal();
+          }, 500);
+        }
+      }, 300);
+    }, 800);
+  }
+}
+
+// Edit suggestion manually
+function editSuggestion(rawName, index) {
+  closeModal();
+
+  // Search for the product in the library
+  const searchInput = document.getElementById('productSearch');
+  if (searchInput) {
+    searchInput.value = rawName;
+    renderProductLibrary(rawName);
+    searchInput.focus();
+    showMessage(`Showing product: ${rawName}. Edit it in the table below.`, 'info');
+  }
+}
+
+// Apply all high confidence suggestions
+function applyAllHighConfidence() {
+  const highSuggestions = currentQualitySuggestions.filter(s => s.confidence === 'high');
+
+  if (highSuggestions.length === 0) {
+    alert('No high confidence suggestions to apply');
+    return;
+  }
+
+  if (!confirm(`Apply all ${highSuggestions.length} high confidence suggestions?\n\nThis will update multiple products at once.`)) {
+    return;
+  }
+
+  console.log('=== APPLY ALL HIGH CONFIDENCE ===');
+  let appliedCount = 0;
+  const customMappings = loadCustomMappings();
+  const productLibrary = buildProductLibrary();
+
+  currentQualitySuggestions.forEach((sug, index) => {
+    if (sug.confidence === 'high') {
+      console.log('Applying:', sug.rawName);
+
+      if (!customMappings[sug.rawName]) {
+        // Initialize with full product data from library
+        const product = productLibrary.find(p => p.rawName === sug.rawName);
+        if (product) {
+          customMappings[sug.rawName] = {
+            productName: product.productName,
+            brand: product.brand,
+            productType: product.productType,
+            storeSection: product.storeSection
+          };
+        } else {
+          customMappings[sug.rawName] = {};
+        }
+      }
+
+      // Apply all suggested fields
+      Object.keys(sug.suggested).forEach(field => {
+        customMappings[sug.rawName][field] = sug.suggested[field];
+        console.log(`  ${field}: ${sug.suggested[field]}`);
+      });
+
+      appliedCount++;
+
+      // Update UI
+      const element = document.getElementById(`suggestion-${index}`);
+      if (element) {
+        element.style.opacity = '0.3';
+        element.innerHTML = '<div style="padding: 20px; text-align: center; color: #28a745;">✓ Applied</div>';
+      }
+    }
+  });
+
+  saveCustomMappings(customMappings);
+  console.log(`✓ Applied ${appliedCount} suggestions`);
+  renderProductLibrary(document.getElementById('productSearch')?.value || '');
+
+  setTimeout(() => {
+    // Remove applied suggestions
+    document.querySelectorAll('[id^="suggestion-"]').forEach(el => {
+      if (el.style.opacity === '0.3') {
+        el.remove();
+      }
+    });
+
+    const remaining = document.querySelectorAll('[id^="suggestion-"]').length;
+    if (remaining === 0) {
+      closeModal();
+    }
+
+    showMessage(`✓ Applied ${appliedCount} high confidence suggestions!`, 'success');
+  }, 1000);
+}
+
+// Handle deleting a custom category
+function handleDeleteCategory(categoryName) {
+  if (!confirm(`Delete product type "${categoryName}"?\n\nProducts using this type will be moved to "Other".`)) {
+    return;
+  }
+
+  deleteCustomCategory(categoryName);
+  showCategoryManager(); // Refresh the modal
+
+  // Refresh the product library to show updated products
+  if (allReceipts.length > 0) {
+    renderProductLibrary(document.getElementById('productSearch').value);
+  }
+}
+
+// Rename a category globally
+function renameCategory(oldName, newName) {
+  console.log('=== RENAME PRODUCT TYPE ===');
+  console.log('Old name:', oldName);
+  console.log('New name:', newName);
+
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    alert('Product type name cannot be empty');
+    return false;
+  }
+
+  if (oldName === trimmed) {
+    return true; // No change
+  }
+
+  const allCategories = getAllCategories();
+  if (allCategories.includes(trimmed) && trimmed !== oldName) {
+    alert('A product type with this name already exists');
+    return false;
+  }
+
+  // Check if it's a default category
+  const defaultCategories = [
+    'frukost', 'lunch', 'middag', 'mellanmål', 'snacks', 'godis',
+    'dryck', 'hälsa', 'städning', 'katmat', 'övrigt'
+  ];
+
+  if (defaultCategories.includes(oldName)) {
+    // Add to renamed defaults map
+    const renamedCategories = loadRenamedCategories();
+    renamedCategories[oldName] = trimmed;
+    saveRenamedCategories(renamedCategories);
+    console.log('✓ Added to renamed defaults map');
+  } else {
+    // Update custom categories list
+    const customCategories = loadCustomCategories();
+    const index = customCategories.indexOf(oldName);
+    if (index !== -1) {
+      customCategories[index] = trimmed;
+      saveCustomCategories(customCategories);
+      console.log('✓ Updated in custom categories list');
+    }
+  }
+
+  // Update all products using this category
+  const customMappings = loadCustomMappings();
+  let updated = false;
+  Object.keys(customMappings).forEach(rawName => {
+    if (customMappings[rawName].productType === oldName) {
+      customMappings[rawName].productType = trimmed;
+      // DON'T auto-update storeSection - user controls this manually
+      updated = true;
+      console.log('Updated product:', rawName, '(storeSection preserved)');
+    }
+  });
+  if (updated) {
+    saveCustomMappings(customMappings);
+    console.log('✓ Updated all products');
+  }
+
+  console.log('=== RENAME COMPLETE ===');
+  return true;
+}
+
+// Handle renaming a category
+function handleRenameCategory(oldName) {
+  const newName = prompt(`Rename product type "${oldName}" to:`, oldName);
+  if (newName === null) return; // User cancelled
+
+  if (renameCategory(oldName, newName)) {
+    showCategoryManager(); // Refresh the modal
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+// Show tag management modal
+function showTagManager() {
+  const allTags = getAllTags();
+
+  // Count products per tag
+  const customMappings = loadCustomMappings();
+  const tagCounts = {};
+  allTags.forEach(tag => tagCounts[tag] = 0);
+
+  Object.values(customMappings).forEach(mapping => {
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      mapping.tags.forEach(tag => {
+        if (tagCounts[tag] !== undefined) {
+          tagCounts[tag]++;
+        }
+      });
+    }
+  });
+
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>🏷️ Tag Management</h2>
+    <p style="color: #666; margin-bottom: 20px;">Create tags to organize your products. Use tags to group items by meal (breakfast, dinner), type (staple, treat), or any category that helps you shop.</p>
+
+    <!-- Create New Tag -->
+    <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #4caf50;">
+      <h3 style="margin-top: 0;">➕ Create New Tag</h3>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <input
+          type="text"
+          id="new-tag-input"
+          placeholder="e.g., breakfast, staple, favorite..."
+          style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;"
+          onkeypress="if(event.key === 'Enter') { handleCreateTag(); }"
+        />
+        <button
+          class="btn"
+          onclick="handleCreateTag()"
+          style="padding: 10px 20px; background: #4caf50; color: white; font-weight: bold;"
+        >+ Create Tag</button>
+      </div>
+      <div style="font-size: 12px; color: #2e7d32; margin-top: 8px;">
+        💡 Create tags here, then add them to products in the Product Library
+      </div>
+    </div>
+
+    <div style="margin: 20px 0;">
+      <h3>All Tags (${allTags.length})</h3>
+      ${allTags.length === 0 ? `
+        <p style="color: #999; text-align: center; padding: 20px;">
+          No tags yet. Create your first tag above!
+        </p>
+      ` : `
+      <div style="margin-top: 10px;">
+        ${allTags.sort().map(tag => `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f8f9fa; border-radius: 4px; margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <span style="font-weight: 500; color: #667eea; font-size: 14px;">${tag}</span>
+              <span style="color: #999; font-size: 12px; margin-left: 10px;">(${tagCounts[tag]} product${tagCounts[tag] !== 1 ? 's' : ''})</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button
+                class="btn"
+                onclick="handleRenameTag('${tag.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px; background: #667eea;"
+                title="Rename this tag"
+              >Rename</button>
+              <button
+                class="reset-btn"
+                onclick="handleDeleteTag('${tag.replace(/'/g, "\\'")}')"
+                style="padding: 6px 12px; font-size: 12px;"
+                title="Delete this tag"
+              >Delete</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      `}
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Focus on the input
+  setTimeout(() => {
+    const input = document.getElementById('new-tag-input');
+    if (input) input.focus();
+  }, 100);
+}
+
+// Handle creating a new tag
+function handleCreateTag() {
+  const input = document.getElementById('new-tag-input');
+  if (!input) return;
+
+  const newTag = input.value.trim().toLowerCase();
+
+  if (!newTag) {
+    alert('Please enter a tag name');
+    return;
+  }
+
+  // Check if tag already exists
+  const allTags = getAllTags();
+  if (allTags.includes(newTag)) {
+    alert('This tag already exists!');
+    input.value = '';
+    input.focus();
+    return;
+  }
+
+  // Add to master tag list
+  const masterTags = loadMasterTags();
+  masterTags.push(newTag);
+  saveMasterTags(masterTags);
+
+  console.log(`✓ Created tag: "${newTag}"`);
+  showMessage(`✓ Tag "${newTag}" created! Now available in Product Library.`, 'success');
+
+  // Refresh the tag manager modal
+  showTagManager();
+}
+
+// Delete a tag globally
+function deleteTag(tagName) {
+  const customMappings = loadCustomMappings();
+  let updated = false;
+
+  // Remove from all products
+  Object.keys(customMappings).forEach(rawName => {
+    const mapping = customMappings[rawName];
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      const originalLength = mapping.tags.length;
+      mapping.tags = mapping.tags.filter(t => t !== tagName);
+      if (mapping.tags.length !== originalLength) {
+        updated = true;
+      }
+    }
+  });
+
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+
+  // Also remove from master tag list
+  const masterTags = loadMasterTags();
+  const filteredMasterTags = masterTags.filter(t => t !== tagName);
+  if (filteredMasterTags.length !== masterTags.length) {
+    saveMasterTags(filteredMasterTags);
+  }
+}
+
+// Handle deleting a tag
+function handleDeleteTag(tagName) {
+  if (!confirm(`Delete tag "${tagName}"?\n\nThis tag will be removed from all products.`)) {
+    return;
+  }
+
+  deleteTag(tagName);
+
+  // Close modal if no tags left, otherwise refresh
+  const remainingTags = getAllTags();
+  if (remainingTags.length === 0) {
+    closeModal();
+    alert('All tags have been deleted.');
+  } else {
+    showTagManager(); // Refresh the modal
+  }
+
+  // Refresh the product library to show updated products
+  if (allReceipts.length > 0) {
+    renderProductLibrary(document.getElementById('productSearch').value);
+  }
+}
+
+// Rename a tag globally
+function renameTag(oldTag, newTag) {
+  const trimmed = newTag.trim().toLowerCase();
+  if (!trimmed) {
+    alert('Tag name cannot be empty');
+    return false;
+  }
+
+  if (oldTag === trimmed) {
+    return true; // No change
+  }
+
+  const allTags = getAllTags();
+  if (allTags.includes(trimmed) && trimmed !== oldTag) {
+    alert('A tag with this name already exists');
+    return false;
+  }
+
+  const customMappings = loadCustomMappings();
+  let updated = false;
+
+  // Rename in all products
+  Object.keys(customMappings).forEach(rawName => {
+    const mapping = customMappings[rawName];
+    if (mapping.tags && Array.isArray(mapping.tags)) {
+      const index = mapping.tags.indexOf(oldTag);
+      if (index !== -1) {
+        mapping.tags[index] = trimmed;
+        updated = true;
+      }
+    }
+  });
+
+  if (updated) {
+    saveCustomMappings(customMappings);
+  }
+
+  // Also rename in master tag list
+  const masterTags = loadMasterTags();
+  const masterIndex = masterTags.indexOf(oldTag);
+  if (masterIndex !== -1) {
+    masterTags[masterIndex] = trimmed;
+    saveMasterTags(masterTags);
+  }
+
+  return true;
+}
+
+// Handle renaming a tag
+function handleRenameTag(oldTag) {
+  const newTag = prompt(`Rename tag "${oldTag}" to:`, oldTag);
+  if (newTag === null) return; // User cancelled
+
+  if (renameTag(oldTag, newTag)) {
+    showTagManager(); // Refresh the modal
+    if (allReceipts.length > 0) {
+      renderProductLibrary(document.getElementById('productSearch').value);
+    }
+  }
+}
+
+// ===== SHOPPING LIST / REKLAMBLAD FUNCTIONALITY =====
+
+// Store current promotions
+let currentPromotions = [];
+
+// Event listener for reklamblad upload (only if element exists)
+const reklamInput = document.getElementById('reklamInput');
+if (reklamInput) {
+  reklamInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file || file.type !== 'application/pdf') {
+    showReklamMessage('Please upload a PDF file', 'error');
+    return;
+  }
+
+  showReklamMessage('Processing promotional flyer...', 'info');
+
+  try {
+    await processReklamblad(file);
+    document.getElementById('reklamInput').value = '';
+  } catch (error) {
+    console.error('Error processing reklamblad:', error);
+    showReklamMessage('Error processing flyer. Please try again.', 'error');
+  }
+  });
+}
+
+// Process reklamblad PDF
+async function processReklamblad(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+
+    let allTextItems = [];
+    const debugMode = document.getElementById('reklamDebugMode').checked;
+
+    // Extract text with position data from all pages
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      // Store items with their position and text
+      textContent.items.forEach(item => {
+        allTextItems.push({
+          text: item.str,
+          x: item.transform[4],
+          y: item.transform[5],
+          height: item.height,
+          page: i
+        });
+      });
+    }
+
+    // Debug output
+    if (debugMode) {
+      const debugOutput = document.getElementById('reklamDebugOutput');
+      const debugText = document.getElementById('debugText');
+
+      let debugInfo = `=== RAW PDF TEXT (${allTextItems.length} items) ===\n\n`;
+
+      // Sort by page, then Y (top to bottom), then X (left to right)
+      allTextItems.sort((a, b) => {
+        if (a.page !== b.page) return a.page - b.page;
+        if (Math.abs(a.y - b.y) > 5) return b.y - a.y; // Y descending (top to bottom)
+        return a.x - b.x; // X ascending (left to right)
+      });
+
+      // Show first 200 items
+      allTextItems.slice(0, 200).forEach((item, i) => {
+        debugInfo += `[${i}] Page ${item.page}, X:${item.x.toFixed(1)}, Y:${item.y.toFixed(1)} → "${item.text}"\n`;
+      });
+
+      if (allTextItems.length > 200) {
+        debugInfo += `\n... (showing first 200 of ${allTextItems.length} items)`;
+      }
+
+      debugText.textContent = debugInfo;
+      debugOutput.style.display = 'block';
+    }
+
+    // Parse promotions from positioned text
+    currentPromotions = parsePromotions(allTextItems, debugMode);
+
+    if (currentPromotions.length === 0) {
+      showReklamMessage('No promotions found in this flyer. Make sure it\'s a Willys promotional flyer.', 'error');
+      return;
+    }
+
+    // Check if we have receipt data
+    if (allReceipts.length === 0) {
+      showReklamMessage(`Found ${currentPromotions.length} promotions! Upload some receipts first to get personalized recommendations.`, 'info');
+      displayPromotions(currentPromotions, []);
+      return;
+    }
+
+    // Compare with purchase history and display
+    const recommendations = generateRecommendations(currentPromotions);
+    displayPromotions(currentPromotions, recommendations);
+
+    showReklamMessage(`Found ${currentPromotions.length} promotions! ${recommendations.length} match your shopping habits.`, 'success');
+
+  } catch (error) {
+    console.error('Reklamblad processing error:', error);
+    throw error;
+  }
+}
+
+// Parse promotions from reklamblad text using spatial clustering
+function parsePromotions(textItems, debugMode = false) {
+  const promotions = [];
+  let debugLog = '';
+
+  // Blacklist of common promotional text that's NOT products
+  const blacklist = [
+    'för dig med willysplus', 'willysplus', 'spara', 'jämförpris', 'dagspris', 'dgrspris',
+    'gäller ej', 'gäller', 'djupfryst', 'djupfrysta', 'köp/hushåll', 'max', 'pant',
+    'olika sorter', 'per förp', 'per st', 'per kg', 'kampanjpris', 'extrapris',
+    'extra vergine', 'ca-pris', 'ord pris', 'jfr-pris', 'medlemspris', 'lägsta',
+    'från', 'till', 'söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag',
+    'heta priser', 'alltid billigt', 'tillfälligt parti', 'rött pris', 'reservation',
+    'ed1', 'vår affärsidé', 'sveriges billigaste', 'priserna gäller'
+  ];
+
+  if (debugMode) {
+    debugLog += '\n\n=== SPATIAL CLUSTERING ANALYSIS ===\n\n';
+  }
+
+  // Step 1: Find potential product names (capitalized text, not blacklisted)
+  const productCandidates = [];
+  const priceCandidates = [];
+
+  textItems.forEach(item => {
+    const text = item.text.trim();
+    const textLower = text.toLowerCase();
+    if (!text || text.length < 2) return;
+
+    // Check if this is a product name candidate (mostly uppercase, not blacklisted)
+    const isUppercase = /^[A-ZÅÄÖ]/.test(text);
+    const isAllCaps = text === text.toUpperCase() && /[A-ZÅÄÖ]/.test(text);
+    const notBlacklisted = !blacklist.some(term => textLower.includes(term));
+
+    if (isAllCaps && notBlacklisted && text.length >= 3 && text.length <= 50) {
+      // Could be a product name
+      productCandidates.push({
+        text: text,
+        x: item.x,
+        y: item.y,
+        page: item.page
+      });
+    }
+
+    // Check if this looks like a price
+    // Pattern 1: Just numbers "14", "90", "19", etc.
+    if (/^\d{1,3}$/.test(text)) {
+      priceCandidates.push({
+        text: text,
+        value: parseFloat(text),
+        x: item.x,
+        y: item.y,
+        page: item.page,
+        type: 'digit'
+      });
+    }
+
+    // Pattern 2: "2 FÖR" indicator
+    if (text.toLowerCase().includes('för') && /\d/.test(text)) {
+      priceCandidates.push({
+        text: text,
+        value: null,
+        x: item.x,
+        y: item.y,
+        page: item.page,
+        type: 'multi-buy'
+      });
+    }
+  });
+
+  if (debugMode) {
+    debugLog += `Found ${productCandidates.length} product candidates\n`;
+    debugLog += `Found ${priceCandidates.length} price candidates\n\n`;
+  }
+
+  // Step 2: Try to construct prices from digit fragments
+  // In the PDF, "14:90" might be split into "14", ":", "90"
+  const constructedPrices = [];
+
+  for (let i = 0; i < priceCandidates.length; i++) {
+    const pc = priceCandidates[i];
+    if (pc.type !== 'digit') continue;
+
+    // Look for another digit nearby (within 20 pixels) that could be decimal part
+    for (let j = i + 1; j < priceCandidates.length; j++) {
+      const next = priceCandidates[j];
+      if (next.type !== 'digit' || next.page !== pc.page) continue;
+
+      const distance = Math.sqrt(Math.pow(next.x - pc.x, 2) + Math.pow(next.y - pc.y, 2));
+
+      if (distance < 30 && next.value < 100) {
+        // This might be "kr.ore" like "14" and "90" = 14.90
+        constructedPrices.push({
+          value: parseFloat(`${pc.value}.${next.value}`),
+          text: `${pc.value}:${next.value}`,
+          x: pc.x,
+          y: pc.y,
+          page: pc.page
+        });
+      }
+    }
+  }
+
+  if (debugMode) {
+    debugLog += `Constructed ${constructedPrices.length} prices from fragments\n\n`;
+    constructedPrices.slice(0, 10).forEach(p => {
+      debugLog += `  Price: ${p.text} at (${p.x.toFixed(0)}, ${p.y.toFixed(0)})\n`;
+    });
+    debugLog += '\n';
+  }
+
+  // Step 3: Match product names with nearby prices
+  const seen = new Set();
+
+  productCandidates.forEach(product => {
+    const productLower = product.text.toLowerCase();
+
+    // Skip blacklisted product names
+    if (blacklist.some(term => productLower.includes(term))) {
+      if (debugMode) debugLog += `❌ BLACKLIST: ${product.text}\n`;
+      return;
+    }
+
+    // Find the closest price (within 200 pixels)
+    let closestPrice = null;
+    let closestDistance = Infinity;
+
+    constructedPrices.forEach(price => {
+      if (price.page !== product.page) return;
+
+      const distance = Math.sqrt(
+        Math.pow(price.x - product.x, 2) +
+        Math.pow(price.y - product.y, 2)
+      );
+
+      if (distance < 200 && distance < closestDistance && price.value > 1 && price.value < 500) {
+        closestPrice = price;
+        closestDistance = distance;
+      }
+    });
+
+    if (closestPrice) {
+      const key = product.text.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+
+        promotions.push({
+          name: product.text,
+          price: closestPrice.value,
+          priceText: closestPrice.text + ' kr',
+          rawMatch: `${product.text} @ ${closestPrice.text}`
+        });
+
+        if (debugMode) {
+          debugLog += `✅ MATCH: "${product.text}" → ${closestPrice.text} kr (distance: ${closestDistance.toFixed(0)}px)\n`;
+        }
+      }
+    } else if (debugMode) {
+      debugLog += `⚠️ NO PRICE NEARBY: "${product.text}"\n`;
+    }
+  });
+
+  if (debugMode) {
+    debugLog += `\n=== FOUND ${promotions.length} PROMOTIONS ===\n`;
+    promotions.forEach((promo, i) => {
+      debugLog += `${i + 1}. ${promo.name} - ${promo.priceText}\n`;
+    });
+
+    // Append to debug output
+    const debugText = document.getElementById('debugText');
+    if (debugText) {
+      debugText.textContent += debugLog;
+    }
+  }
+
+  return promotions;
+}
+
+// Generate smart recommendations based on purchase history
+function generateRecommendations(promotions) {
+  const recommendations = [];
+
+  // Build purchase history map
+  const purchaseHistory = {};
+
+  allReceipts.forEach(receipt => {
+    receipt.items.forEach(item => {
+      const normalizedName = normalizeProductName(item.name);
+
+      if (!purchaseHistory[normalizedName]) {
+        purchaseHistory[normalizedName] = {
+          name: item.name,
+          purchases: [],
+          totalSpent: 0,
+          avgPrice: 0
+        };
+      }
+
+      purchaseHistory[normalizedName].purchases.push({
+        date: new Date(receipt.date),
+        price: item.price,
+        quantity: item.quantity || 1
+      });
+      purchaseHistory[normalizedName].totalSpent += item.price;
+    });
+  });
+
+  // Calculate averages and find matches
+  Object.values(purchaseHistory).forEach(product => {
+    if (product.purchases.length > 0) {
+      product.avgPrice = product.totalSpent / product.purchases.length;
+      product.lastPurchase = new Date(Math.max(...product.purchases.map(p => p.date)));
+      product.daysSinceLastPurchase = Math.floor((new Date() - product.lastPurchase) / (1000 * 60 * 60 * 24));
+
+      // Calculate purchase frequency (average days between purchases)
+      if (product.purchases.length >= 2) {
+        const sortedDates = product.purchases.map(p => p.date).sort((a, b) => a - b);
+        let totalDays = 0;
+        for (let i = 1; i < sortedDates.length; i++) {
+          totalDays += (sortedDates[i] - sortedDates[i-1]) / (1000 * 60 * 60 * 24);
+        }
+        product.avgDaysBetweenPurchases = totalDays / (sortedDates.length - 1);
+      } else {
+        product.avgDaysBetweenPurchases = 999; // Unknown frequency
+      }
+    }
+  });
+
+  // Match promotions with purchase history
+  promotions.forEach(promo => {
+    const normalizedPromo = normalizeProductName(promo.name);
+
+    // Find matches in purchase history
+    Object.keys(purchaseHistory).forEach(histKey => {
+      const similarity = calculateSimilarity(normalizedPromo, histKey);
+
+      // If similarity is high enough, it's a match
+      if (similarity > 0.6) {
+        const product = purchaseHistory[histKey];
+        const savings = product.avgPrice - promo.price;
+        const savingsPercent = (savings / product.avgPrice) * 100;
+
+        // Only recommend if there's actual savings
+        if (savings > 0.5) {
+          // Calculate urgency score
+          let urgency = 'low';
+          let urgencyScore = 0;
+
+          if (product.avgDaysBetweenPurchases < 999) {
+            const expectedNextPurchase = product.daysSinceLastPurchase / product.avgDaysBetweenPurchases;
+            if (expectedNextPurchase >= 0.8) {
+              urgency = 'high';
+              urgencyScore = 3;
+            } else if (expectedNextPurchase >= 0.5) {
+              urgency = 'medium';
+              urgencyScore = 2;
+            } else {
+              urgency = 'low';
+              urgencyScore = 1;
+            }
+          }
+
+          recommendations.push({
+            promotion: promo,
+            matchedProduct: product,
+            savings: savings,
+            savingsPercent: savingsPercent,
+            urgency: urgency,
+            urgencyScore: urgencyScore,
+            daysSinceLastPurchase: product.daysSinceLastPurchase,
+            avgDaysBetweenPurchases: product.avgDaysBetweenPurchases,
+            purchaseCount: product.purchases.length
+          });
+        }
+      }
+    });
+  });
+
+  // Sort by urgency and savings
+  recommendations.sort((a, b) => {
+    if (a.urgencyScore !== b.urgencyScore) {
+      return b.urgencyScore - a.urgencyScore;
+    }
+    return b.savings - a.savings;
+  });
+
+  return recommendations;
+}
+
+// Normalize product name for matching
+function normalizeProductName(name) {
+  return name
+    .toUpperCase()
+    .replace(/[ÅÄÖA]/g, match => {
+      const map = {'Å': 'A', 'Ä': 'A', 'Ö': 'O'};
+      return map[match] || match;
+    })
+    .replace(/\s+/g, ' ')
+    .replace(/[^\w\s]/g, '')
+    .trim();
+}
+
+// Calculate similarity between two strings (simple version)
+function calculateSimilarity(str1, str2) {
+  // Simple approach: check if one contains key words from the other
+  const words1 = str1.split(/\s+/).filter(w => w.length > 2);
+  const words2 = str2.split(/\s+/).filter(w => w.length > 2);
+
+  if (words1.length === 0 || words2.length === 0) return 0;
+
+  let matches = 0;
+  words1.forEach(w1 => {
+    if (words2.some(w2 => w2.includes(w1) || w1.includes(w2))) {
+      matches++;
+    }
+  });
+
+  return matches / Math.max(words1.length, words2.length);
+}
+
+// Display promotions and recommendations
+function displayPromotions(promotions, recommendations) {
+  // Show the content area
+  document.getElementById('shopping-list-content').style.display = 'block';
+
+  // Update stats
+  document.getElementById('matchedItems').textContent = recommendations.length;
+  document.getElementById('totalPromos').textContent = promotions.length;
+
+  const totalSavings = recommendations.reduce((sum, rec) => sum + rec.savings, 0);
+  document.getElementById('potentialSavings').textContent = totalSavings.toFixed(2) + ' kr';
+
+  const urgentBuys = recommendations.filter(r => r.urgency === 'high').length;
+  document.getElementById('urgentBuys').textContent = urgentBuys;
+
+  // Display recommendations
+  const recDiv = document.getElementById('recommendations');
+  if (recommendations.length === 0) {
+    recDiv.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No matching items found. These promotions don\'t match your usual purchases.</p>';
+  } else {
+    let html = '';
+
+    recommendations.forEach(rec => {
+      const urgencyColors = {
+        high: 'linear-gradient(135deg, #dc3545, #c82333)',
+        medium: 'linear-gradient(135deg, #ffc107, #ff9800)',
+        low: 'linear-gradient(135deg, #28a745, #20c997)'
+      };
+
+      const urgencyIcons = {
+        high: '🔥',
+        medium: '⏰',
+        low: '✅'
+      };
+
+      const urgencyLabels = {
+        high: 'BUY NOW!',
+        medium: 'Good Deal',
+        low: 'Nice Savings'
+      };
+
+      let frequencyText = '';
+      if (rec.avgDaysBetweenPurchases < 999) {
+        frequencyText = `You buy this every ${Math.round(rec.avgDaysBetweenPurchases)} days. Last bought ${rec.daysSinceLastPurchase} days ago.`;
+      } else {
+        frequencyText = `You've bought this ${rec.purchaseCount} time(s). Last purchased ${rec.daysSinceLastPurchase} days ago.`;
+      }
+
+      html += `
+        <div style="background: white; border-left: 5px solid #667eea; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <span style="font-size: 24px;">${urgencyIcons[rec.urgency]}</span>
+                <h4 style="margin: 0; color: #333; font-size: 18px;">${rec.promotion.name}</h4>
+                <span style="background: ${urgencyColors[rec.urgency]}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                  ${urgencyLabels[rec.urgency]}
+                </span>
+              </div>
+
+              <div style="color: #666; font-size: 14px; margin-bottom: 8px;">
+                ${frequencyText}
+              </div>
+
+              <div style="display: flex; gap: 20px; align-items: center;">
+                <div>
+                  <span style="color: #999; text-decoration: line-through;">Avg: ${rec.matchedProduct.avgPrice.toFixed(2)} kr</span>
+                  <span style="font-size: 20px; font-weight: bold; color: #28a745; margin-left: 10px;">
+                    ${rec.promotion.priceText}
+                  </span>
+                </div>
+                <div style="background: #d4edda; color: #155724; padding: 8px 15px; border-radius: 5px; font-weight: bold;">
+                  💰 Save ${rec.savings.toFixed(2)} kr (${rec.savingsPercent.toFixed(0)}%)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    recDiv.innerHTML = html;
+  }
+
+  // Display all promotions
+  const allPromoDiv = document.getElementById('allPromotions');
+  let promoHtml = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">';
+
+  promotions.forEach(promo => {
+    const isRecommended = recommendations.some(r => r.promotion === promo);
+
+    promoHtml += `
+      <div style="background: ${isRecommended ? '#f0f8ff' : 'white'}; padding: 15px; border-radius: 8px; border: 2px solid ${isRecommended ? '#667eea' : '#e0e0e0'};">
+        ${isRecommended ? '<div style="color: #667eea; font-weight: bold; margin-bottom: 5px;">⭐ You buy this!</div>' : ''}
+        <div style="font-weight: bold; color: #333; margin-bottom: 5px;">${promo.name}</div>
+        <div style="font-size: 18px; color: #28a745; font-weight: bold;">${promo.priceText}</div>
+      </div>
+    `;
+  });
+
+  promoHtml += '</div>';
+  allPromoDiv.innerHTML = promoHtml;
+}
+
+// Show message in reklamblad status area
+function showReklamMessage(message, type) {
+  const statusDiv = document.getElementById('reklamStatus');
+  statusDiv.innerHTML = `<div class="msg ${type}">${message}</div>`;
+
+  if (type === 'success' || type === 'error') {
+    setTimeout(() => {
+      statusDiv.innerHTML = '';
+    }, 5000);
+  }
+}
+
+// ===== SHOPPING LIST FUNCTIONALITY =====
+
+// Store categories in the order you walk through the store
+const STORE_CATEGORIES = [
+  { id: 'dryck', name: 'Dryck', icon: '🥤' },
+  { id: 'frukt-gront', name: 'Frukt & Grönt', icon: '🍎' },
+  { id: 'brod', name: 'Bröd', icon: '🍞' },
+  { id: 'kylskap', name: 'Kylskåp', icon: '🥛' },
+  { id: 'fryst', name: 'Fryst', icon: '❄️' },
+  { id: 'kryddor', name: 'Kryddor', icon: '🌶️' },
+  { id: 'skafferi', name: 'Skafferi', icon: '🥫' },
+  { id: 'snacks-godis', name: 'Snacks/Godis', icon: '🍫' },
+  { id: 'halsa-skonhet', name: 'Hälsa & Skönhet', icon: '💄' },
+  { id: 'icke-mat', name: 'Icke-mat', icon: '📦' },
+  { id: 'stad', name: 'Städ', icon: '🧹' }
+];
+
+// Load shopping list from localStorage
+function loadShoppingList() {
+  const saved = localStorage.getItem('shoppingList_v2');
+  return saved ? JSON.parse(saved) : [];
+}
+
+// Save shopping list to localStorage
+function saveShoppingList(list) {
+  localStorage.setItem('shoppingList_v2', JSON.stringify(list));
+}
+
+// v3.0: Price rounding function - always rounds UP to .00 or .50
+function roundPriceUp(price) {
+  const cents = price % 1;
+  const whole = Math.floor(price);
+
+  if (cents === 0) return price; // Already .00
+  if (cents > 0.50) return whole + 1; // Round to next .00
+  return whole + 0.50; // Round to .50
+}
+
+// v3.0: Load snoozed suggestions from localStorage
+function loadSnoozedSuggestions() {
+  const saved = localStorage.getItem('snoozedSuggestions_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// v3.0: Save snoozed suggestions to localStorage
+function saveSnoozedSuggestions(snoozed) {
+  localStorage.setItem('snoozedSuggestions_v2', JSON.stringify(snoozed));
+}
+
+// v3.0: Load dismissed suggestions with new format
+function loadDismissedSuggestionsV3() {
+  const saved = localStorage.getItem('dismissedSuggestions_v2');
+  return saved ? JSON.parse(saved) : {};
+}
+
+// v3.0: Save dismissed suggestions with new format
+function saveDismissedSuggestionsV3(dismissed) {
+  localStorage.setItem('dismissedSuggestions_v2', JSON.stringify(dismissed));
+}
+
+// v3.39: Weekly pattern detection - returns % of weeks item was purchased IN LAST 6 MONTHS
+function calculateWeeklyFrequency(purchases) {
+  if (purchases.length < 4) return 0; // Need at least 4 purchases for pattern
+
+  // Filter to last 6 months only
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+  const recentPurchases = purchases.filter(p => p.date >= sixMonthsAgo);
+
+  // Need at least 4 purchases in the last 6 months
+  if (recentPurchases.length < 4) return 0;
+
+  const sortedDates = recentPurchases.map(p => p.date).sort((a, b) => a - b);
+  const firstPurchase = sortedDates[0];
+  const lastPurchase = sortedDates[sortedDates.length - 1];
+
+  // Calculate total weeks from first to last purchase (within 6-month window)
+  const totalDays = (lastPurchase - firstPurchase) / (1000 * 60 * 60 * 24);
+
+  // Require at least 4 weeks of data to establish weekly pattern
+  if (totalDays < 28) return 0;
+
+  const totalWeeks = Math.ceil(totalDays / 7);
+
+  // Group purchases by week (and by unique date to avoid same-day duplicates)
+  const weekDates = new Map(); // week -> Set of unique dates
+  recentPurchases.forEach(p => {
+    const weekNumber = Math.floor((p.date - firstPurchase) / (1000 * 60 * 60 * 24 * 7));
+    const dateKey = p.date.toDateString();
+
+    if (!weekDates.has(weekNumber)) {
+      weekDates.set(weekNumber, new Set());
+    }
+    weekDates.get(weekNumber).add(dateKey);
+  });
+
+  // Count weeks with at least one purchase
+  const weeksWithPurchases = weekDates.size;
+
+  // Return percentage of weeks with purchases
+  return (weeksWithPurchases / totalWeeks) * 100;
+}
+
+// v3.0: Generate suggestions based on purchase history
+// Auto-generates on page load, prioritizes WEEKLY items first
+function generateSuggestions() {
+  if (allReceipts.length === 0) {
+    const section = document.getElementById('suggestions-section');
+    if (section) section.style.display = 'none';
+    return;
+  }
+
+  // Use analysis instance to get staple products (most frequently purchased)
+  // PERFORMANCE: Only create new analysis instance if receipts changed
+  if (!analysisInstance || analysisVersion !== receiptsVersion) {
+    analysisInstance = new GroceryAnalysis(allReceipts);
+    analysisVersion = receiptsVersion;
+  }
+
+  // Get top 50 staple products (purchased regularly)
+  const stapleProducts = analysisInstance.getStapleProducts(0.5);
+  const top50Staples = stapleProducts.slice(0, 50);
+  const stapleNames = new Set(top50Staples.map(s => s.name.toLowerCase()));
+
+  const customMappings = loadCustomMappings();
+  const groupedProducts = {};
+
+  // Process each receipt and each item - process ALL items (not just staples) for weekly detection
+  allReceipts.forEach(receipt => {
+    if (!receipt.items || !receipt.date) return;
+
+    receipt.items.forEach(item => {
+      const standardName = window.ProductCategories.standardizeProduct(item.name);
+      const mapping = customMappings[item.name] || {};
+      const productName = mapping.productName || standardName;
+
+      const brand = mapping.brand || '';
+      const productType = mapping.productType || '';
+      const storeSection = mapping.storeSection || '';
+
+      if (!groupedProducts[productName]) {
+        groupedProducts[productName] = {
+          name: productName,
+          brand: brand,
+          productType: productType,
+          storeSection: storeSection,
+          purchases: [],
+          totalSpent: 0,
+          prices: []
+        };
+      }
+
+      const unitPrice = item.totalPrice / (item.quantity || 1);
+
+      groupedProducts[productName].purchases.push({
+        date: new Date(receipt.date),
+        price: item.totalPrice,
+        quantity: item.quantity,
+        unitPrice: unitPrice
+      });
+
+      groupedProducts[productName].prices.push(unitPrice);
+      groupedProducts[productName].totalSpent += item.totalPrice;
+    });
+  });
+
+  // Get current shopping list, dismissed, and snoozed items
+  const currentList = loadShoppingList();
+  const currentListNames = new Set(currentList.map(item => item.name.toLowerCase()));
+  const dismissed = loadDismissedSuggestionsV3();
+  const snoozed = loadSnoozedSuggestions();
+
+  const now = new Date();
+  const suggestions = [];
+
+  console.log(`🔍 Shopping List Debug: Processing ${Object.keys(groupedProducts).length} unique products (weekly frequency based on last 6 months)`);
+
+  // Calculate frequency and create suggestions
+  const weeklyDebug = [];
+  Object.values(groupedProducts).forEach(group => {
+    const purchases = group.purchases;
+    if (purchases.length < 2) return; // Need at least 2 purchases
+
+    // Calculate weekly frequency
+    const weeklyFrequency = calculateWeeklyFrequency(purchases);
+    const isWeekly = weeklyFrequency >= 75; // 75% threshold - user can dismiss unwanted items
+
+    // Debug weekly items
+    if (weeklyFrequency > 0) {
+      weeklyDebug.push({
+        name: group.name,
+        frequency: weeklyFrequency,
+        isWeekly: isWeekly,
+        purchases: purchases.length
+      });
+    }
+
+    // Check if it's a staple
+    const isStaple = stapleNames.has(group.name.toLowerCase());
+
+    // Calculate average price per unit (use latest purchase price, not average)
+    const sortedByDate = purchases.sort((a, b) => b.date - a.date);
+    const latestPurchase = sortedByDate[0];
+    const latestPrice = latestPurchase.unitPrice;
+    const roundedPrice = roundPriceUp(latestPrice);
+
+    // Calculate price statistics for display
+    const prices = group.prices.sort((a, b) => a - b);
+    const minPrice = prices[0];
+    const maxPrice = prices[prices.length - 1];
+
+    // Calculate days since last purchase
+    const sortedDates = purchases.map(p => p.date).sort((a, b) => a - b);
+    const lastPurchaseDate = sortedDates[sortedDates.length - 1];
+    const daysSince = Math.floor((new Date() - lastPurchaseDate) / (1000 * 60 * 60 * 24));
+
+    // Calculate average days between purchases
+    let avgDaysBetween = 999;
+    if (purchases.length >= 2) {
+      // Get unique purchase dates (avoid same-day duplicates)
+      const uniqueDates = [...new Set(sortedDates.map(d => d.toDateString()))].map(ds => new Date(ds));
+      uniqueDates.sort((a, b) => a - b);
+
+      if (uniqueDates.length >= 2) {
+        let totalDays = 0;
+        for (let i = 1; i < uniqueDates.length; i++) {
+          totalDays += (uniqueDates[i] - uniqueDates[i-1]) / (1000 * 60 * 60 * 24);
+        }
+        avgDaysBetween = Math.max(1, totalDays / (uniqueDates.length - 1)); // Minimum 1 day
+      }
+    }
+
+    // Calculate overdue ratio for staples
+    const overdueRatio = daysSince / avgDaysBetween;
+    const isOverdue = overdueRatio >= 1.0; // Overdue if past average interval
+
+    // Determine if should suggest
+    let shouldSuggest = false;
+    let priority = 0; // 1 = WEEKLY, 0 = OVERDUE STAPLE
+    let urgency = 'none';
+
+    if (isWeekly) {
+      // Priority 1: Weekly items (regardless of staple status)
+      shouldSuggest = true;
+      priority = 1;
+      urgency = 'weekly';
+    } else if (isStaple && isOverdue) {
+      // Priority 2: Overdue staples (from top 50 only)
+      shouldSuggest = true;
+      priority = 0;
+
+      // Urgency for overdue staples
+      if (overdueRatio >= 1.5) {
+        urgency = 'critical';
+      } else if (overdueRatio >= 1.2) {
+        urgency = 'high';
+      } else {
+        urgency = 'medium';
+      }
+    }
+
+    if (shouldSuggest) {
+      suggestions.push({
+        name: group.name,
+        brand: group.brand,
+        productType: group.productType,
+        storeSection: group.storeSection,
+        latestPrice: roundedPrice,
+        minPrice: minPrice,
+        maxPrice: maxPrice,
+        daysSince: daysSince,
+        avgDaysBetween: avgDaysBetween,
+        urgency: urgency,
+        priority: priority,
+        purchaseCount: purchases.length,
+        weeklyFrequency: weeklyFrequency,
+        isWeekly: isWeekly,
+        overdueRatio: overdueRatio
+      });
+    }
+  });
+
+  console.log(`📊 Weekly items found: ${weeklyDebug.filter(d => d.isWeekly).length} of ${weeklyDebug.length} items with weekly pattern`);
+  console.log('Top weekly candidates:', weeklyDebug.sort((a, b) => b.frequency - a.frequency).slice(0, 10));
+  console.log(`💡 Total suggestions before filtering: ${suggestions.length} (${suggestions.filter(s => s.isWeekly).length} weekly, ${suggestions.filter(s => !s.isWeekly).length} overdue staples)`);
+  console.log(`🔍 Dismissed items:`, Object.keys(dismissed));
+  console.log(`💤 Snoozed items:`, Object.keys(snoozed));
+
+  // Filter out dismissed, snoozed, and items already in shopping list
+  const filterReasons = { dismissed: 0, snoozed: 0, inList: 0 };
+  const filteredSuggestions = suggestions.filter(sug => {
+    const key = sug.name.toLowerCase();
+
+    // Check if dismissed - PRIORITY CHECK (dismissed items should NEVER appear)
+    if (dismissed[key]) {
+      filterReasons.dismissed++;
+      console.log(`🚫 Filtered out dismissed item: "${sug.name}"`);
+      return false;
+    }
+
+    // Check if snoozed
+    if (snoozed[key]) {
+      const snoozedUntil = new Date(snoozed[key].snoozedUntil);
+      if (now < snoozedUntil) {
+        filterReasons.snoozed++;
+        return false; // Still snoozed
+      } else {
+        console.log(`⏰ Snooze expired for: "${sug.name}" (expired ${Math.ceil((now - snoozedUntil) / (1000 * 60 * 60 * 24))} days ago)`);
+      }
+    }
+
+    // Check if already in list
+    if (currentListNames.has(key)) {
+      filterReasons.inList++;
+      return false;
+    }
+
+    return true;
+  });
+
+  // Sort: WEEKLY items first (priority=1), then OVERDUE STAPLES (priority=0)
+  // Within each priority group, sort by days overdue
+  filteredSuggestions.sort((a, b) => {
+    if (b.priority !== a.priority) {
+      return b.priority - a.priority; // WEEKLY (1) before OVERDUE (0)
+    }
+    return b.daysSince - a.daysSince; // More overdue first
+  });
+
+  const filtered = suggestions.length - filteredSuggestions.length;
+  console.log(`🔒 Filtered out ${filtered} items: ${filterReasons.dismissed} dismissed, ${filterReasons.snoozed} snoozed, ${filterReasons.inList} in shopping list`);
+  console.log(`✅ Final suggestions to display: ${filteredSuggestions.length}`);
+
+  renderSuggestions(filteredSuggestions);
+}
+
+// v3.0: Render suggestions with new format
+function renderSuggestions(suggestions) {
+  const section = document.getElementById('suggestions-section');
+  const list = document.getElementById('suggestions-list');
+
+  if (suggestions.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+
+  let html = '';
+  suggestions.forEach(sug => {
+    const frequencyText = sug.avgDaysBetween < 999
+      ? `Buy every ${Math.round(sug.avgDaysBetween)} days`
+      : `Bought ${sug.purchaseCount} times`;
+
+    // v3.0: Badge and styling based on urgency
+    let urgencyBadge = '';
+    let urgencyClass = '';
+    let urgencyIcon = '';
+
+    if (sug.urgency === 'weekly') {
+      // WEEKLY items - top priority
+      urgencyClass = 'background: #e8f5e9; border-left: 4px solid #4caf50;';
+      urgencyBadge = '<span style="background: #4caf50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">📅 WEEKLY</span>';
+      urgencyIcon = '📅 ';
+    } else if (sug.urgency === 'critical') {
+      urgencyClass = 'background: #ffe0e0; border-left: 4px solid #dc3545;';
+      urgencyBadge = '<span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">⏰ CRITICAL</span>';
+      urgencyIcon = '🔴 ';
+    } else if (sug.urgency === 'high') {
+      urgencyClass = 'background: #fff3cd; border-left: 4px solid #ffc107;';
+      urgencyBadge = '<span style="background: #ffc107; color: #333; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">⏰ HIGH</span>';
+      urgencyIcon = '⚠️ ';
+    } else if (sug.urgency === 'medium') {
+      urgencyClass = 'background: #e7f3ff; border-left: 4px solid #0c63e4;';
+      urgencyBadge = '<span style="background: #0c63e4; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-left: 8px;">⏰ OVERDUE</span>';
+      urgencyIcon = '🔵 ';
+    } else {
+      urgencyClass = 'background: #f9f9f9; border-left: 4px solid #ccc;';
+    }
+
+    // Weekly frequency info for weekly items
+    const weeklyInfo = sug.isWeekly
+      ? `<div style="font-size: 12px; color: #4caf50; margin-top: 5px; font-weight: 500;">
+           Purchased in ${Math.round(sug.weeklyFrequency)}% of weeks
+         </div>`
+      : '';
+
+    html += `
+      <div style="${urgencyClass} padding: 15px; margin-bottom: 10px; border-radius: 5px;">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+          <div style="flex: 1;">
+            <div style="font-weight: bold; font-size: 16px; margin-bottom: 5px; display: flex; align-items: center;">
+              ${urgencyIcon}${sug.name}${urgencyBadge}
+            </div>
+            <div style="font-size: 13px; color: #666; margin-bottom: 5px;">
+              ${frequencyText} • Last bought ${sug.daysSince} days ago
+            </div>
+            <div style="font-size: 13px; color: #666;">
+              ~${sug.latestPrice.toFixed(2)} kr (range: ${sug.minPrice.toFixed(2)} - ${sug.maxPrice.toFixed(2)} kr)
+            </div>
+            ${weeklyInfo}
+          </div>
+          <div style="display: flex; gap: 6px; flex-direction: column;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 4px; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 2px;">
+                <button onclick="updateSuggestionQuantity('${sug.name.replace(/'/g, "\\'")}', -1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">−</button>
+                <span id="qty-${sug.name.replace(/[^a-zA-Z0-9]/g, '_')}" style="min-width: 20px; text-align: center; font-weight: 500;">1</span>
+                <button onclick="updateSuggestionQuantity('${sug.name.replace(/'/g, "\\'")}', 1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">+</button>
+              </div>
+              <button class="btn" onclick="addSuggestionToListWithQty('${sug.name.replace(/'/g, "\\'")}', '${sug.storeSection}', ${sug.latestPrice})" style="margin: 0; background: #28a745; padding: 8px 16px; font-size: 13px;">
+                ➕ Add
+              </button>
+            </div>
+            <button class="btn" onclick="snoozeSuggestion('${sug.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #17a2b8; padding: 8px 16px; font-size: 13px;">
+              💤 Snooze
+            </button>
+            <button class="btn" onclick="dismissSuggestion('${sug.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #6c757d; padding: 8px 16px; font-size: 13px;">
+              ❌ Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  list.innerHTML = html;
+}
+
+// v3.0: OLD functions kept for backward compatibility
+function loadDismissedSuggestions() {
+  const saved = localStorage.getItem('dismissedSuggestions');
+  return saved ? JSON.parse(saved) : {};
+}
+
+function saveDismissedSuggestions(dismissed) {
+  localStorage.setItem('dismissedSuggestions', JSON.stringify(dismissed));
+}
+
+// v3.0: Dismiss a suggestion permanently
+function dismissSuggestion(name) {
+  const dismissed = loadDismissedSuggestionsV3();
+  dismissed[name.toLowerCase()] = {
+    dismissedAt: Date.now(),
+    name: name
+  };
+  saveDismissedSuggestionsV3(dismissed);
+
+  // Remove from snoozed list if present (dismiss overrides snooze)
+  const snoozed = loadSnoozedSuggestions();
+  if (snoozed[name.toLowerCase()]) {
+    delete snoozed[name.toLowerCase()];
+    saveSnoozedSuggestions(snoozed);
+    console.log(`🔄 Removed "${name}" from snoozed list (dismissed takes priority)`);
+  }
+
+  // Regenerate suggestions to remove dismissed one
+  generateSuggestions();
+  renderDismissedList();
+  renderSnoozedList();
+  showMessage(`Dismissed "${name}"`, 'info');
+}
+
+// v3.0: Snooze a suggestion for 7 days
+function snoozeSuggestion(name) {
+  const snoozed = loadSnoozedSuggestions();
+  const snoozedUntil = new Date();
+  snoozedUntil.setDate(snoozedUntil.getDate() + 7);
+
+  snoozed[name.toLowerCase()] = {
+    snoozedUntil: snoozedUntil.toISOString(),
+    snoozedAt: Date.now(),
+    name: name
+  };
+  saveSnoozedSuggestions(snoozed);
+
+  // Regenerate suggestions to remove snoozed one
+  generateSuggestions();
+  renderSnoozedList();
+  showMessage(`Snoozed "${name}" for 7 days`, 'info');
+}
+
+// v3.0: Restore a dismissed suggestion
+function restoreDismissedSuggestion(name) {
+  const dismissed = loadDismissedSuggestionsV3();
+  delete dismissed[name.toLowerCase()];
+  saveDismissedSuggestionsV3(dismissed);
+
+  // Check if item is still snoozed
+  const snoozed = loadSnoozedSuggestions();
+  const key = name.toLowerCase();
+  if (snoozed[key]) {
+    const snoozedUntil = new Date(snoozed[key].snoozedUntil);
+    const now = new Date();
+    if (now < snoozedUntil) {
+      const daysLeft = Math.ceil((snoozedUntil - now) / (1000 * 60 * 60 * 24));
+      showMessage(`Restored "${name}" (still snoozed for ${daysLeft} more day${daysLeft !== 1 ? 's' : ''})`, 'info');
+    } else {
+      showMessage(`Restored "${name}"`, 'success');
+    }
+  } else {
+    showMessage(`Restored "${name}"`, 'success');
+  }
+
+  generateSuggestions();
+  renderDismissedList();
+}
+
+// v3.0: Un-snooze a suggestion
+function unSnoozeSuggestion(name) {
+  const snoozed = loadSnoozedSuggestions();
+  delete snoozed[name.toLowerCase()];
+  saveSnoozedSuggestions(snoozed);
+
+  // Check if item is also dismissed
+  const dismissed = loadDismissedSuggestionsV3();
+  const key = name.toLowerCase();
+  if (dismissed[key]) {
+    showMessage(`Un-snoozed "${name}" (still dismissed - restore it from Dismissed Suggestions to see it again)`, 'info');
+  } else {
+    showMessage(`Un-snoozed "${name}"`, 'success');
+  }
+
+  generateSuggestions();
+  renderSnoozedList();
+}
+
+// v3.0: Extend snooze by another 7 days
+function extendSnoozeSuggestion(name) {
+  const snoozed = loadSnoozedSuggestions();
+  const existingSnoozed = snoozed[name.toLowerCase()];
+
+  if (existingSnoozed) {
+    const currentSnoozedUntil = new Date(existingSnoozed.snoozedUntil);
+    currentSnoozedUntil.setDate(currentSnoozedUntil.getDate() + 7);
+    existingSnoozed.snoozedUntil = currentSnoozedUntil.toISOString();
+  }
+
+  saveSnoozedSuggestions(snoozed);
+  renderSnoozedList();
+  showMessage(`Extended snooze for "${name}" by 7 days`, 'info');
+}
+
+// v3.0: Add suggestion to shopping list
+function addSuggestionToList(name, storeSection, estimatedPrice) {
+  const list = loadShoppingList();
+
+  // Check if already in list
+  if (list.find(item => item.name.toLowerCase() === name.toLowerCase())) {
+    showMessage('Item already in your list', 'info');
+    return;
+  }
+
+  const newItem = {
+    id: Date.now().toString(),
+    name: name,
+    category: storeSection,
+    checked: false,
+    quantity: 1,
+    estimatedPrice: estimatedPrice,
+    isRecurrent: true,
+    addedDate: new Date().toISOString()
+  };
+
+  list.push(newItem);
+  saveShoppingList(list);
+
+  // Remove from suggestions display
+  generateSuggestions();
+
+  renderShoppingList();
+  showMessage(`Added "${name}" to your list`, 'success');
+}
+
+// Update suggestion quantity in UI
+function updateSuggestionQuantity(name, change) {
+  const sanitizedName = name.replace(/[^a-zA-Z0-9]/g, '_');
+  const qtyElement = document.getElementById(`qty-${sanitizedName}`);
+  if (qtyElement) {
+    let currentQty = parseInt(qtyElement.textContent) || 1;
+    currentQty = Math.max(1, currentQty + change);
+    qtyElement.textContent = currentQty;
+  }
+}
+
+// Add suggestion to shopping list with custom quantity
+function addSuggestionToListWithQty(name, storeSection, estimatedPrice) {
+  const sanitizedName = name.replace(/[^a-zA-Z0-9]/g, '_');
+  const qtyElement = document.getElementById(`qty-${sanitizedName}`);
+  const quantity = qtyElement ? parseInt(qtyElement.textContent) || 1 : 1;
+
+  const list = loadShoppingList();
+
+  // Check if already in list
+  if (list.find(item => item.name.toLowerCase() === name.toLowerCase())) {
+    showMessage('Item already in your list', 'info');
+    return;
+  }
+
+  const newItem = {
+    id: Date.now().toString(),
+    name: name,
+    category: storeSection,
+    checked: false,
+    quantity: quantity,
+    estimatedPrice: estimatedPrice,
+    isRecurrent: true,
+    addedDate: new Date().toISOString()
+  };
+
+  list.push(newItem);
+  saveShoppingList(list);
+
+  // Remove from suggestions display
+  generateSuggestions();
+
+  renderShoppingList();
+  showMessage(`Added ${quantity}x "${name}" to your list`, 'success');
+}
+
+// Map analysis category to store category
+function mapCategoryToStore(analysisCategory) {
+  const mapping = {
+    'Beverages': 'dryck',
+    'Alcoholic Beverages': 'dryck',
+    'Produce': 'frukt-gront',
+    'Bread & Bakery': 'brod',
+    'Dairy': 'kylskap',
+    'Dairy - Cheese': 'kylskap',
+    'Dairy - Butter': 'kylskap',
+    'Dairy - Eggs': 'kylskap',
+    'Dairy - Yogurt': 'kylskap',
+    'Meat & Proteins': 'kylskap',
+    'Frozen Foods': 'fryst',
+    'Pantry - Spices': 'kryddor',
+    'Pantry - Pasta': 'skafferi',
+    'Pantry - Grains': 'skafferi',
+    'Pantry - Sauces': 'skafferi',
+    'Condiments & Spreads': 'skafferi',
+    'Breakfast & Cereals': 'skafferi',
+    'Snacks': 'snacks-godis',
+    'Personal Care': 'halsa-skonhet',
+    'Household': 'icke-mat',
+    'Other': 'icke-mat'
+  };
+
+  return mapping[analysisCategory] || 'skafferi';
+}
+
+// v3.0: Render shopping list - AUTO-HIDES checked items, AUTO-SYNCS categories from Product Library
+function renderShoppingList() {
+  const list = loadShoppingList();
+  const itemsDiv = document.getElementById('shopping-list-items');
+  const emptyDiv = document.getElementById('shopping-list-empty');
+  const statsDiv = document.getElementById('list-stats');
+
+  // v3.0: Filter out checked items (auto-hide)
+  const uncheckedList = list.filter(i => !i.checked);
+
+  if (uncheckedList.length === 0) {
+    itemsDiv.innerHTML = '';
+    emptyDiv.style.display = 'block';
+    statsDiv.textContent = '0 items • Estimated: 0 kr';
+    return;
+  }
+
+  emptyDiv.style.display = 'none';
+
+  // v3.0: Load Product Library to get current categories
+  const customMappings = loadCustomMappings();
+  let needsUpdate = false;
+
+  // Group by category (only unchecked items)
+  const grouped = {};
+  STORE_CATEGORIES.forEach(cat => {
+    grouped[cat.id] = [];
+  });
+
+  uncheckedList.forEach(item => {
+    // v3.0: Look up current category from Product Library
+    // Try to find matching product in customMappings by name
+    let currentCategory = item.category; // default to stored category
+
+    // Search through all receipt names to find one that maps to this product
+    const matchingMapping = Object.entries(customMappings).find(([receiptName, mapping]) => {
+      const mappedName = mapping.productName || window.ProductCategories.standardizeProduct(receiptName);
+      return mappedName.toLowerCase() === item.name.toLowerCase();
+    });
+
+    if (matchingMapping && matchingMapping[1].storeSection) {
+      currentCategory = matchingMapping[1].storeSection;
+
+      // Update stored category if it changed
+      if (item.category !== currentCategory) {
+        item.category = currentCategory;
+        needsUpdate = true;
+      }
+    }
+
+    if (grouped[currentCategory]) {
+      grouped[currentCategory].push(item);
+    } else {
+      // Default to skafferi if category not found
+      grouped['skafferi'].push(item);
+    }
+  });
+
+  // Save updated categories back to localStorage
+  if (needsUpdate) {
+    saveShoppingList(list);
+  }
+
+  // Calculate stats (only unchecked items)
+  const uncheckedCount = uncheckedList.length;
+  const estimatedTotal = uncheckedList
+    .reduce((sum, i) => sum + ((i.estimatedPrice || 0) * (i.quantity || 1)), 0);
+
+  statsDiv.textContent = `${uncheckedCount} items • Estimated: ${estimatedTotal.toFixed(0)} kr`;
+
+  // Render by category
+  let html = '';
+  STORE_CATEGORIES.forEach(category => {
+    const items = grouped[category.id];
+    if (items.length === 0) return;
+
+    // Sort items by sortOrder within category
+    items.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+    html += `
+      <div style="margin-bottom: 20px;">
+        <div style="background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 12px 15px; border-radius: 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+          <span>${category.icon} ${category.name}</span>
+          <span style="background: rgba(255,255,255,0.3); padding: 2px 10px; border-radius: 12px; font-size: 12px;">
+            ${items.length}
+          </span>
+        </div>
+        <div style="background: #f9f9f9; padding: 10px; border-radius: 0 0 8px 8px;">
+          ${items.map((item, index) => {
+            const quantity = item.quantity || 1;
+            const totalPrice = (item.estimatedPrice || 0) * quantity;
+            return `
+            <div
+              draggable="true"
+              data-item-id="${item.id}"
+              data-category="${item.category}"
+              ondragstart="handleDragStart(event)"
+              ondragover="handleDragOver(event)"
+              ondragleave="handleDragLeave(event)"
+              ondrop="handleDrop(event)"
+              ondragend="handleDragEnd(event)"
+              style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; cursor: move; transition: all 0.2s;">
+              <div style="margin-right: 8px; color: #999; font-size: 16px; cursor: grab; user-select: none;" title="Drag to reorder">☰</div>
+              <input type="checkbox" onchange="toggleItem('${item.id}')" style="width: 24px; height: 24px; margin-right: 15px; cursor: pointer;" onclick="event.stopPropagation();">
+              <div style="flex: 1;">
+                <div style="font-weight: 500;">${item.name}</div>
+                ${item.estimatedPrice ? `
+                  <div style="font-size: 12px; color: #666; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
+                    <span>~${item.estimatedPrice.toFixed(2)} kr</span>
+                    ${quantity > 1 ? `<span style="color: #28a745; font-weight: 500;">× ${quantity} = ${totalPrice.toFixed(2)} kr</span>` : ''}
+                  </div>
+                ` : ''}
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;" onclick="event.stopPropagation();">
+                <div style="display: flex; align-items: center; gap: 4px; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 2px;">
+                  <button onclick="updateQuantity('${item.id}', -1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">−</button>
+                  <span style="min-width: 20px; text-align: center; font-weight: 500;">${quantity}</span>
+                  <button onclick="updateQuantity('${item.id}', 1)" style="background: #f8f9fa; border: none; padding: 4px 8px; cursor: pointer; font-weight: bold; color: #666; border-radius: 3px;">+</button>
+                </div>
+                <button onclick="deleteItem('${item.id}')" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                  Delete
+                </button>
+              </div>
+            </div>
+          `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  });
+
+  itemsDiv.innerHTML = html;
+}
+
+// Toggle item checked state
+function toggleItem(itemId) {
+  const list = loadShoppingList();
+  const item = list.find(i => i.id === itemId);
+  if (item) {
+    item.checked = !item.checked;
+    saveShoppingList(list);
+    renderShoppingList();
+  }
+}
+
+// Update item quantity
+function updateQuantity(itemId, change) {
+  const list = loadShoppingList();
+  const item = list.find(i => i.id === itemId);
+  if (item) {
+    const newQuantity = (item.quantity || 1) + change;
+    if (newQuantity < 1) {
+      // Don't allow quantity to go below 1
+      return;
+    }
+    item.quantity = newQuantity;
+    saveShoppingList(list);
+    renderShoppingList();
+  }
+}
+
+// Delete item
+function deleteItem(itemId) {
+  if (!confirm('Remove this item from your list?')) return;
+
+  const list = loadShoppingList();
+  const filtered = list.filter(i => i.id !== itemId);
+  saveShoppingList(filtered);
+  renderShoppingList();
+}
+
+// v3.0: Drag and drop functionality for reordering items
+let draggedItemId = null;
+
+function handleDragStart(event) {
+  draggedItemId = event.currentTarget.dataset.itemId;
+  event.currentTarget.style.opacity = '0.5';
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+
+  const targetElement = event.currentTarget;
+  const draggedCategory = document.querySelector(`[data-item-id="${draggedItemId}"]`)?.dataset.category;
+  const targetCategory = targetElement.dataset.category;
+
+  // Only allow drop within same category
+  if (draggedCategory === targetCategory && targetElement.dataset.itemId !== draggedItemId) {
+    targetElement.style.borderTop = '3px solid #667eea';
+  }
+}
+
+function handleDragLeave(event) {
+  event.currentTarget.style.borderTop = '';
+}
+
+function handleDrop(event) {
+  event.preventDefault();
+  event.currentTarget.style.borderTop = '';
+
+  const targetItemId = event.currentTarget.dataset.itemId;
+  if (draggedItemId === targetItemId) return;
+
+  const list = loadShoppingList();
+  const draggedItem = list.find(i => i.id === draggedItemId);
+  const targetItem = list.find(i => i.id === targetItemId);
+
+  if (!draggedItem || !targetItem) return;
+
+  // Only allow reordering within same category
+  if (draggedItem.category !== targetItem.category) return;
+
+  // Get all unchecked items in the same category, sorted by sortOrder
+  const categoryItems = list
+    .filter(i => !i.checked && i.category === draggedItem.category)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+  const draggedIndex = categoryItems.findIndex(i => i.id === draggedItemId);
+  const targetIndex = categoryItems.findIndex(i => i.id === targetItemId);
+
+  if (draggedIndex < 0 || targetIndex < 0) return;
+
+  // Remove dragged item and insert at target position
+  categoryItems.splice(draggedIndex, 1);
+  categoryItems.splice(targetIndex, 0, draggedItem);
+
+  // Reassign sortOrder to all items in category
+  categoryItems.forEach((item, index) => {
+    item.sortOrder = index;
+  });
+
+  saveShoppingList(list);
+  renderShoppingList();
+}
+
+function handleDragEnd(event) {
+  event.currentTarget.style.opacity = '';
+  event.currentTarget.style.borderTop = '';
+  draggedItemId = null;
+}
+
+// v3.0: Render dismissed suggestions list
+function renderDismissedList() {
+  const dismissed = loadDismissedSuggestionsV3();
+  const dismissedDiv = document.getElementById('dismissed-list');
+
+  if (!dismissedDiv) return; // Element not in UI yet
+
+  const items = Object.values(dismissed);
+
+  if (items.length === 0) {
+    dismissedDiv.innerHTML = '<p style="color: #999; padding: 10px;">No dismissed suggestions</p>';
+    return;
+  }
+
+  let html = '<div style="margin-top: 10px;">';
+  items.forEach(item => {
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #e0e0e0;">
+        <span style="color: #666;">${item.name}</span>
+        <button class="btn" onclick="restoreDismissedSuggestion('${item.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #28a745; padding: 4px 12px; font-size: 12px;">
+          Restore
+        </button>
+      </div>
+    `;
+  });
+  html += '</div>';
+
+  dismissedDiv.innerHTML = html;
+}
+
+// v3.0: Render snoozed suggestions list
+function renderSnoozedList() {
+  const snoozed = loadSnoozedSuggestions();
+  const snoozedDiv = document.getElementById('snoozed-list');
+
+  if (!snoozedDiv) return; // Element not in UI yet
+
+  const items = Object.values(snoozed);
+
+  if (items.length === 0) {
+    snoozedDiv.innerHTML = '<p style="color: #999; padding: 10px;">No snoozed suggestions</p>';
+    return;
+  }
+
+  const now = new Date();
+  let html = '<div style="margin-top: 10px;">';
+  items.forEach(item => {
+    const snoozedUntil = new Date(item.snoozedUntil);
+    const daysLeft = Math.ceil((snoozedUntil - now) / (1000 * 60 * 60 * 24));
+
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #e0e0e0;">
+        <div>
+          <div style="color: #666;">${item.name}</div>
+          <div style="font-size: 11px; color: #999;">Returns in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}</div>
+        </div>
+        <div style="display: flex; gap: 4px;">
+          <button class="btn" onclick="unSnoozeSuggestion('${item.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #28a745; padding: 4px 12px; font-size: 12px;">
+            Un-snooze
+          </button>
+          <button class="btn" onclick="extendSnoozeSuggestion('${item.name.replace(/'/g, "\\'")}')" style="margin: 0; background: #17a2b8; padding: 4px 12px; font-size: 12px;">
+            +7 days
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  html += '</div>';
+
+  snoozedDiv.innerHTML = html;
+}
+
+// Clear checked items
+function clearCheckedItems() {
+  const list = loadShoppingList();
+  const unchecked = list.filter(i => !i.checked);
+
+  if (list.length === unchecked.length) {
+    showMessage('No checked items to clear', 'info');
+    return;
+  }
+
+  if (!confirm(`Remove ${list.length - unchecked.length} checked item(s)?`)) return;
+
+  saveShoppingList(unchecked);
+  renderShoppingList();
+  showMessage('Checked items cleared', 'success');
+}
+
+// Clear all suggested items (keeps manually added items)
+function clearAllSuggestions() {
+  console.log('=== CLEAR ALL SUGGESTIONS ===');
+  const list = loadShoppingList();
+  console.log('Current shopping list:', list);
+
+  // Filter:
+  // - Keep items with isRecurrent === false (manually added)
+  // - Keep items with isRecurrent === undefined (old items added before this feature, treat as manual)
+  // - Remove items with isRecurrent === true (AI suggestions)
+  const manualItems = list.filter(i => i.isRecurrent !== true);
+  const suggestedItems = list.filter(i => i.isRecurrent === true);
+
+  console.log('Manual items (will keep):', manualItems);
+  console.log('Suggested items (will clear):', suggestedItems);
+  console.log('Suggested count:', suggestedItems.length);
+
+  if (suggestedItems.length === 0) {
+    showMessage('No suggested items to clear', 'info');
+    return;
+  }
+
+  if (!confirm(`Remove all ${suggestedItems.length} suggested item(s)?\n\n${manualItems.length} manually added items will remain.`)) return;
+
+  // Clear suggested items from shopping list
+  saveShoppingList(manualItems);
+  renderShoppingList();
+
+  // Clear dismissed suggestions and regenerate
+  localStorage.removeItem('dismissedSuggestions_v2');
+
+  // Force immediate UI update with a slight delay to ensure shopping list renders first
+  setTimeout(() => {
+    generateSuggestions();
+    showMessage(`${suggestedItems.length} suggested items cleared and suggestions regenerated`, 'success');
+    console.log('✓ Suggestions cleared and regenerated');
+  }, 100);
+}
+
+// Draft management functions
+function loadManualReceiptDraft() {
+  const draft = localStorage.getItem('manualReceiptDraft');
+  return draft ? JSON.parse(draft) : null;
+}
+
+function saveManualReceiptDraft() {
+  const store = document.getElementById('manual-store')?.value.trim();
+  const date = document.getElementById('manual-date')?.value;
+  const time = document.getElementById('manual-time')?.value;
+  const receiptId = document.getElementById('manual-id')?.value.trim();
+
+  const items = [];
+  const itemDivs = document.querySelectorAll('[id^="manual-item-"]');
+
+  itemDivs.forEach(itemDiv => {
+    const name = itemDiv.querySelector('.manual-item-name')?.value.trim() || '';
+    const qty = itemDiv.querySelector('.manual-item-qty')?.value || '1';
+    const unitPrice = itemDiv.querySelector('.manual-item-price')?.value || '0';
+    const totalPrice = itemDiv.querySelector('.manual-item-total')?.value || '0';
+    const discount = itemDiv.querySelector('.manual-item-discount')?.value || '0';
+
+    items.push({ name, qty, unitPrice, totalPrice, discount });
+  });
+
+  const draft = {
+    store,
+    date,
+    time,
+    receiptId,
+    items,
+    timestamp: new Date().toISOString()
+  };
+
+  localStorage.setItem('manualReceiptDraft', JSON.stringify(draft));
+}
+
+function clearManualReceiptDraft() {
+  localStorage.removeItem('manualReceiptDraft');
+}
+
+function openManualEntryFormWithDraft(draft) {
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal(); clearManualReceiptDraft();">&times;</span>
+    <h2>✍️ Manual Receipt Entry</h2>
+    <p style="color: #666; margin-bottom: 10px;">Enter receipt details manually when PDF parsing fails</p>
+    <p style="background: #fff3cd; color: #856404; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-bottom: 20px;">
+      📝 Draft restored from ${new Date(draft.timestamp).toLocaleString()}
+    </p>
+
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Store Name</label>
+          <input type="text" id="manual-store" value="${draft.store || 'Willys'}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Receipt ID (optional)</label>
+          <input type="text" id="manual-id" value="${draft.receiptId || ''}" onchange="saveManualReceiptDraft()" placeholder="Auto-generated if empty" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Date</label>
+          <input type="date" id="manual-date" value="${draft.date || new Date().toISOString().split('T')[0]}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Time</label>
+          <input type="time" id="manual-time" value="${draft.time || new Date().toTimeString().split(' ')[0].substring(0, 5)}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+    </div>
+
+    <h3>Items</h3>
+    <div id="manual-items-container" style="margin-bottom: 15px;">
+      <!-- Items will be added here -->
+    </div>
+
+    <button onclick="addManualReceiptItem()" class="btn" style="background: #28a745; margin-bottom: 20px;">
+      + Add Item
+    </button>
+
+    <div style="border-top: 2px solid #ddd; padding-top: 20px; margin-top: 20px;">
+      <button onclick="saveManualReceipt()" class="btn" style="background: #667eea; padding: 12px 24px; font-size: 16px;">
+        💾 Save Receipt
+      </button>
+      <button onclick="closeModal(); clearManualReceiptDraft();" class="btn" style="background: #999; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+        Cancel
+      </button>
+      <button onclick="if(confirm('Discard this draft?')) { clearManualReceiptDraft(); closeModal(); }" class="btn" style="background: #dc3545; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+        Discard Draft
+      </button>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Restore items
+  draft.items.forEach(item => {
+    addManualReceiptItem();
+    const lastItem = document.querySelector('[id^="manual-item-"]:last-child');
+    if (lastItem) {
+      lastItem.querySelector('.manual-item-name').value = item.name || '';
+      lastItem.querySelector('.manual-item-qty').value = item.qty || '1';
+      lastItem.querySelector('.manual-item-price').value = item.unitPrice || '0';
+      lastItem.querySelector('.manual-item-total').value = item.totalPrice || '0';
+      lastItem.querySelector('.manual-item-discount').value = item.discount || '0';
+    }
+  });
+
+  // If no items were in draft, add one empty item
+  if (draft.items.length === 0) {
+    addManualReceiptItem();
+  }
+}
+
+// Open manual receipt entry form
+function openManualEntryForm() {
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  const today = new Date().toISOString().split('T')[0];
+  const currentTime = new Date().toTimeString().split(' ')[0].substring(0, 5);
+
+  // Check for draft data
+  const draft = loadManualReceiptDraft();
+  if (draft) {
+    if (confirm('You have unsaved draft data from a previous entry. Would you like to restore it?')) {
+      openManualEntryFormWithDraft(draft);
+      return;
+    } else {
+      // User chose not to restore - clear the draft
+      clearManualReceiptDraft();
+    }
+  }
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal(); saveManualReceiptDraft();">&times;</span>
+    <h2>✍️ Manual Receipt Entry</h2>
+    <p style="color: #666; margin-bottom: 20px;">Enter receipt details manually when PDF parsing fails</p>
+
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Store Name</label>
+          <input type="text" id="manual-store" value="Willys" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Receipt ID (optional)</label>
+          <input type="text" id="manual-id" placeholder="Auto-generated if empty" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Date</label>
+          <input type="date" id="manual-date" value="${today}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Time</label>
+          <input type="time" id="manual-time" value="${currentTime}" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+      </div>
+    </div>
+
+    <h3>Items</h3>
+    <div id="manual-items-container" style="margin-bottom: 15px;">
+      <!-- Items will be added here -->
+    </div>
+
+    <button onclick="addManualReceiptItem()" class="btn" style="background: #28a745; margin-bottom: 20px;">
+      + Add Item
+    </button>
+
+    <div style="border-top: 2px solid #ddd; padding-top: 20px; margin-top: 20px;">
+      <button onclick="saveManualReceipt()" class="btn" style="background: #667eea; padding: 12px 24px; font-size: 16px;">
+        💾 Save Receipt
+      </button>
+      <button onclick="saveManualReceiptDraft(); closeModal();" class="btn" style="background: #999; padding: 12px 24px; font-size: 16px; margin-left: 10px;">
+        Cancel (Save Draft)
+      </button>
+    </div>
+  `;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Add first item automatically
+  addManualReceiptItem();
+}
+
+// Add item row to manual entry form
+let manualItemCounter = 0;
+function addManualReceiptItem() {
+  const container = document.getElementById('manual-items-container');
+  manualItemCounter++;
+
+  const itemDiv = document.createElement('div');
+  itemDiv.id = `manual-item-${manualItemCounter}`;
+  itemDiv.style.cssText = 'background: #f8f9fa; padding: 15px; padding-top: 40px; border-radius: 8px; margin-bottom: 10px; position: relative;';
+
+  itemDiv.innerHTML = `
+    <button onclick="removeManualItem(${manualItemCounter})" style="position: absolute; top: 8px; right: 8px; background: #dc3545; color: white; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 11px;">
+      × Remove
+    </button>
+
+    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Product Name</label>
+        <input type="text" class="manual-item-name" placeholder="e.g., BRÖD SKOGAHOLM 800G" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Quantity</label>
+        <input type="number" class="manual-item-qty" value="1" min="0.01" step="0.01" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Unit Price (kr)</label>
+        <input type="number" class="manual-item-price" value="0" min="0" step="0.01" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Total Price (kr)</label>
+        <input type="number" class="manual-item-total" value="0" min="0" step="0.01" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+      <div>
+        <label style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: bold;">Discount (kr)</label>
+        <input type="number" class="manual-item-discount" value="0" min="0" step="0.01" placeholder="Enter as positive number" onchange="saveManualReceiptDraft()" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+        <div style="font-size: 10px; color: #666; margin-top: 2px;">Enter as positive (e.g., 25 not -25)</div>
+      </div>
+    </div>
+  `;
+
+  container.appendChild(itemDiv);
+}
+
+// Remove item from manual entry form
+function removeManualItem(itemId) {
+  const itemDiv = document.getElementById(`manual-item-${itemId}`);
+  if (itemDiv) {
+    itemDiv.remove();
+  }
+}
+
+// Save manual receipt
+function saveManualReceipt() {
+  console.log('=== SAVING MANUAL RECEIPT ===');
+
+  try {
+    const store = document.getElementById('manual-store').value.trim();
+    const date = document.getElementById('manual-date').value;
+    const time = document.getElementById('manual-time').value;
+    let receiptId = document.getElementById('manual-id').value.trim();
+
+    console.log('Store:', store, 'Date:', date, 'Time:', time);
+
+    if (!store || !date || !time) {
+      alert('Please fill in store name, date, and time');
+      return;
+    }
+
+    // Collect items
+    const items = [];
+    const itemDivs = document.querySelectorAll('[id^="manual-item-"]');
+    console.log('Found', itemDivs.length, 'item divs');
+
+    itemDivs.forEach(itemDiv => {
+      const name = itemDiv.querySelector('.manual-item-name').value.trim();
+      const qty = parseFloat(itemDiv.querySelector('.manual-item-qty').value);
+      const unitPrice = parseFloat(itemDiv.querySelector('.manual-item-price').value);
+      const totalPrice = parseFloat(itemDiv.querySelector('.manual-item-total').value);
+      const discount = parseFloat(itemDiv.querySelector('.manual-item-discount').value);
+
+      console.log('Item:', name, 'Qty:', qty, 'Total:', totalPrice);
+
+      if (name && qty > 0) {
+        items.push({
+          name: name,
+          quantity: qty,
+          unitPrice: unitPrice,
+          totalPrice: totalPrice,
+          discount: discount
+        });
+      }
+    });
+
+    console.log('Collected', items.length, 'valid items');
+
+    if (items.length === 0) {
+      alert('Please add at least one item with a name and quantity > 0');
+      return;
+    }
+
+    // Generate receipt ID if not provided
+    if (!receiptId) {
+      receiptId = `MANUAL-${date.replace(/-/g, '')}-${time.replace(/:/g, '')}`;
+    }
+
+    // Calculate totals
+    const totalAmount = items.reduce((sum, item) => sum + item.totalPrice, 0);
+    const totalDiscount = items.reduce((sum, item) => sum + item.discount, 0);
+
+    console.log('Totals - Amount:', totalAmount, 'Discount:', totalDiscount);
+
+    // Create receipt object
+    const receipt = {
+      id: receiptId,
+      store: store,
+      date: date,
+      time: time,
+      totalAmount: totalAmount,
+      totalDiscount: totalDiscount,
+      items: items,
+      source: 'manual' // Mark as manually entered
+    };
+
+    console.log('Created receipt object:', receipt);
+
+    // Add to allReceipts
+    if (!allReceipts) {
+      allReceipts = [];
+      console.log('Initialized empty allReceipts array');
+    }
+    allReceipts.push(receipt);
+    console.log('Added to allReceipts. Total receipts:', allReceipts.length);
+
+    // Save to localStorage
+    localStorage.setItem('allReceipts', JSON.stringify(allReceipts));
+    console.log('✓ Saved to localStorage');
+
+    // Close modal
+    closeModal();
+
+    // Clear the draft since we saved successfully
+    clearManualReceiptDraft();
+    console.log('✓ Cleared draft');
+
+    // Refresh display
+    console.log('Refreshing displays...');
+    displayAllReceipts();
+    refreshAnalysis();
+    console.log('✓ Displays refreshed');
+
+    showMessage(`✅ Manual receipt saved! ${items.length} items, ${totalAmount.toFixed(2)} kr total`, 'success');
+    console.log('=== SAVE COMPLETE ===');
+
+  } catch (error) {
+    console.error('ERROR saving manual receipt:', error);
+    alert('Error saving receipt: ' + error.message + '\n\nCheck console for details.');
+  }
+}
+
+// Add manual item
+// v3.0: Add manual item with latest purchase data and price rounding
+function addManualItem() {
+  // Get all previously purchased products for autocomplete
+  const productLibrary = buildProductLibrary();
+  const customMappings = loadCustomMappings();
+
+  // v3.0: Build searchable product list with LATEST purchase data
+  const productsByName = {};
+
+  allReceipts.forEach(receipt => {
+    if (!receipt.items || !receipt.date) return;
+
+    receipt.items.forEach(item => {
+      const standardName = window.ProductCategories.standardizeProduct(item.name);
+      const mapping = customMappings[item.name] || {};
+      const productName = mapping.productName || standardName;
+      const storeSection = mapping.storeSection || '';
+      const productType = mapping.productType || '';
+
+      const unitPrice = item.totalPrice / (item.quantity || 1);
+      const receiptDate = new Date(receipt.date);
+
+      if (!productsByName[productName] || receiptDate > productsByName[productName].lastDate) {
+        productsByName[productName] = {
+          name: productName,
+          category: productType,
+          storeSection: storeSection,
+          latestPrice: unitPrice,
+          lastDate: receiptDate,
+          purchaseCount: (productsByName[productName]?.purchaseCount || 0) + 1
+        };
+      } else {
+        productsByName[productName].purchaseCount++;
+      }
+    });
+  });
+
+  // Convert to array and apply price rounding
+  const productList = Object.values(productsByName).map(p => ({
+    ...p,
+    latestPrice: roundPriceUp(p.latestPrice)
+  })).sort((a, b) => a.name.localeCompare(b.name));
+
+  // Show modal with autocomplete
+  const modal = document.getElementById('product-modal');
+  const overlay = document.getElementById('modal-overlay');
+
+  document.getElementById('modal-content').innerHTML = `
+    <span class="close-modal" onclick="closeModal()">&times;</span>
+    <h2>➕ Add Item to Shopping List</h2>
+    <p style="color: #666; margin-bottom: 20px;">Search from previously purchased items or add new</p>
+
+    <div style="margin-bottom: 20px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">Search Product</label>
+      <input type="text" id="product-search" placeholder="Type to search..."
+             style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;"
+             oninput="filterProductSuggestions()">
+
+      <div id="product-suggestions" style="display: none; max-height: 300px; overflow-y: auto; border: 2px solid #667eea; border-top: none; border-radius: 0 0 8px 8px; background: white; position: relative; z-index: 1000;">
+        <!-- Suggestions will appear here -->
+      </div>
+    </div>
+
+    <div id="selected-product-info" style="display: none; background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+      <!-- Selected product info -->
+    </div>
+
+    <div style="margin-bottom: 15px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">Or enter new item</label>
+      <input type="text" id="new-item-name" placeholder="New item name..."
+             style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+    </div>
+
+    <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+      <div style="flex: 1;">
+        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Category</label>
+        <select id="item-category" style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+          ${STORE_CATEGORIES.map(cat => `<option value="${cat.id}">${cat.icon} ${cat.name}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex: 1;">
+        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Quantity</label>
+        <input type="number" id="item-quantity" value="1" step="1" min="1"
+               style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+      </div>
+      <div style="flex: 1;">
+        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Est. Price (kr)</label>
+        <input type="number" id="item-price" value="0" step="0.01" min="0"
+               style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button onclick="confirmAddManualItem()" class="btn" style="background: #28a745; padding: 12px 24px; flex: 1;">
+        ✓ Add to List
+      </button>
+      <button onclick="closeModal()" class="btn" style="background: #999; padding: 12px 24px;">
+        Cancel
+      </button>
+    </div>
+  `;
+
+  // Store product list in window for access by other functions
+  window.addItemProductList = productList;
+
+  modal.style.display = 'block';
+  overlay.style.display = 'block';
+
+  // Focus search input
+  setTimeout(() => {
+    document.getElementById('product-search').focus();
+  }, 100);
+}
+
+// v3.0: Filter products - only shows dropdown when typing
+function filterProductSuggestions() {
+  const searchTerm = document.getElementById('product-search').value.toLowerCase();
+  const suggestionsDiv = document.getElementById('product-suggestions');
+  const products = window.addItemProductList || [];
+
+  // v3.0: Only show dropdown when user has typed something
+  if (!searchTerm || searchTerm.length === 0) {
+    suggestionsDiv.style.display = 'none';
+    return;
+  }
+
+  const filtered = products.filter(p => p.name.toLowerCase().includes(searchTerm));
+
+  if (filtered.length === 0) {
+    suggestionsDiv.style.display = 'block';
+    suggestionsDiv.innerHTML = '<div style="padding: 15px; color: #999; text-align: center;">No matching products found</div>';
+    return;
+  }
+
+  suggestionsDiv.style.display = 'block';
+  suggestionsDiv.innerHTML = filtered.slice(0, 20).map(p => `
+    <div style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; hover:background: #f5f5f5;"
+         onmousedown="selectProduct('${p.name.replace(/'/g, "\\'")}', '${p.storeSection}', ${p.latestPrice})"
+         onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+      <div style="font-weight: 500;">${p.name}</div>
+      <div style="font-size: 11px; color: #666; margin-top: 3px;">
+        ${p.category || 'No category'} • ~${p.latestPrice.toFixed(2)} kr • Bought ${p.purchaseCount} times
+      </div>
+    </div>
+  `).join('');
+}
+
+// v3.0: Select product with latest price (already rounded)
+function selectProduct(name, storeSection, latestPrice) {
+  document.getElementById('product-search').value = name;
+  document.getElementById('new-item-name').value = '';
+  document.getElementById('item-category').value = storeSection || 'skafferi';
+  document.getElementById('item-price').value = latestPrice.toFixed(2);
+  document.getElementById('product-suggestions').style.display = 'none';
+
+  const infoDiv = document.getElementById('selected-product-info');
+  infoDiv.style.display = 'block';
+  infoDiv.innerHTML = `
+    <div style="font-size: 14px; color: #0c63e4;">
+      ✓ Selected: <strong>${name}</strong> (~${latestPrice.toFixed(2)} kr)
+    </div>
+  `;
+}
+
+function confirmAddManualItem() {
+  const searchName = document.getElementById('product-search').value.trim();
+  const newName = document.getElementById('new-item-name').value.trim();
+  const name = searchName || newName;
+
+  if (!name) {
+    alert('Please enter or select a product name');
+    return;
+  }
+
+  const category = document.getElementById('item-category').value;
+  const quantity = parseInt(document.getElementById('item-quantity').value) || 1;
+  const price = parseFloat(document.getElementById('item-price').value) || 0;
+
+  const list = loadShoppingList();
+
+  // Check if already in list
+  if (list.find(item => item.name.toLowerCase() === name.toLowerCase())) {
+    alert('This item is already in your shopping list');
+    return;
+  }
+
+  const newItem = {
+    id: Date.now().toString(),
+    name: name,
+    category: category,
+    checked: false,
+    quantity: quantity,
+    estimatedPrice: price,
+    isRecurrent: false,
+    addedDate: new Date().toISOString()
+  };
+
+  list.push(newItem);
+  saveShoppingList(list);
+  closeModal();
+  renderShoppingList();
+  showMessage(`Added ${quantity}x "${name}" to your list`, 'success');
+}
+
+// Initialize shopping list when tab is opened
+// DOMContentLoaded handler moved to line 2901 to avoid duplicates
+
