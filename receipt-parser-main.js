@@ -6003,7 +6003,10 @@ function generateSuggestions() {
         filterReasons.snoozed++;
         return false; // Still snoozed
       } else {
-        console.log(`⏰ Snooze expired for: "${sug.name}" (expired ${Math.ceil((now - snoozedUntil) / (1000 * 60 * 60 * 24))} days ago)`);
+        // v3.60: Remove expired snooze from the list
+        console.log(`⏰ Snooze expired for: "${sug.name}" (expired ${Math.ceil((now - snoozedUntil) / (1000 * 60 * 60 * 24))} days ago) - removing from snoozed list`);
+        delete snoozed[key];
+        saveSnoozedSuggestions(snoozed);
       }
     }
 
@@ -6624,16 +6627,31 @@ function renderSnoozedList() {
 
   if (!snoozedDiv) return; // Element not in UI yet
 
-  const items = Object.values(snoozed);
+  const now = new Date();
 
-  if (items.length === 0) {
+  // v3.60: Filter out expired snoozes and clean them up
+  const activeItems = Object.entries(snoozed).filter(([key, item]) => {
+    const snoozedUntil = new Date(item.snoozedUntil);
+    if (now >= snoozedUntil) {
+      // Expired - remove from storage
+      delete snoozed[key];
+      return false;
+    }
+    return true;
+  });
+
+  // Save if any expired items were removed
+  if (activeItems.length !== Object.keys(snoozed).length) {
+    saveSnoozedSuggestions(snoozed);
+  }
+
+  if (activeItems.length === 0) {
     snoozedDiv.innerHTML = '<p style="color: #999; padding: 10px;">No snoozed suggestions</p>';
     return;
   }
 
-  const now = new Date();
   let html = '<div style="margin-top: 10px;">';
-  items.forEach(item => {
+  activeItems.forEach(([key, item]) => {
     const snoozedUntil = new Date(item.snoozedUntil);
     const daysLeft = Math.ceil((snoozedUntil - now) / (1000 * 60 * 60 * 24));
 
