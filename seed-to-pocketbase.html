@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Seed Data to PocketBase</title>
+<script src="https://cdn.jsdelivr.net/npm/pocketbase@0.21.1/dist/pocketbase.umd.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea, #764ba2); min-height: 100vh; padding: 20px; }
+.container { max-width: 800px; margin: 0 auto; background: white; border-radius: 15px; padding: 40px; }
+h1 { color: #764ba2; text-align: center; margin-bottom: 10px; }
+.subtitle { color: #666; text-align: center; margin-bottom: 30px; }
+.section { background: #f9f9f9; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+.section h3 { color: #667eea; margin-bottom: 15px; }
+.form-group { margin-bottom: 15px; }
+.form-group label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }
+.form-group input { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; }
+.form-group input:focus { border-color: #667eea; outline: none; }
+.btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 15px 30px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; }
+.btn:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-danger { background: #dc3545; }
+.status { padding: 15px; border-radius: 8px; margin: 15px 0; }
+.status.success { background: #d4edda; color: #155724; }
+.status.error { background: #f8d7da; color: #721c24; }
+.status.info { background: #d1ecf1; color: #0c5460; }
+.status.warning { background: #fff3cd; color: #856404; }
+.preview { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0; max-height: 300px; overflow-y: auto; }
+.preview h4 { margin-bottom: 10px; color: #764ba2; }
+.preview-item { padding: 8px; border-bottom: 1px solid #ddd; font-size: 14px; }
+.preview-item:last-child { border-bottom: none; }
+.count { background: #667eea; color: white; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 5px; }
+.progress { margin: 20px 0; }
+.progress-bar { background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; }
+.progress-fill { background: linear-gradient(135deg, #667eea, #764ba2); height: 100%; transition: width 0.3s; }
+.progress-text { text-align: center; margin-top: 5px; color: #666; font-size: 14px; }
+.log { background: #1e1e1e; color: #0f0; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; margin-top: 15px; }
+.log-entry { margin: 2px 0; }
+.log-entry.error { color: #f66; }
+.log-entry.success { color: #6f6; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Seed Data to PocketBase</h1>
+  <p class="subtitle">One-time migration from localStorage to cloud storage</p>
+
+  <!-- Step 1: Preview Local Data -->
+  <div class="section" id="step1">
+    <h3>Step 1: Preview Local Data</h3>
+    <p style="color: #666; margin-bottom: 15px;">First, let's see what data you have stored locally.</p>
+    <button class="btn" onclick="previewLocalData()">Scan localStorage</button>
+    <div id="preview-results" class="hidden"></div>
+  </div>
+
+  <!-- Step 2: Login to PocketBase -->
+  <div class="section" id="step2">
+    <h3>Step 2: Login to PocketBase</h3>
+    <p style="color: #666; margin-bottom: 15px;">Authenticate with your PocketBase account.</p>
+    <div class="form-group">
+      <label>PocketBase URL</label>
+      <input type="text" id="pb-url" value="https://api.buenaar.app" readonly>
+    </div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="pb-email" placeholder="your@email.com">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="pb-password" placeholder="Your password">
+    </div>
+    <button class="btn" onclick="loginToPocketBase()">Login</button>
+    <div id="login-status"></div>
+  </div>
+
+  <!-- Step 3: Seed Data -->
+  <div class="section" id="step3">
+    <h3>Step 3: Seed Data</h3>
+    <p style="color: #666; margin-bottom: 15px;">Push your local data to PocketBase collections.</p>
+    <div class="status warning">
+      <strong>Warning:</strong> This will add data to PocketBase. Make sure you're logged in with the correct account.
+    </div>
+    <button class="btn" id="seed-btn" onclick="seedAllData()" disabled>Start Seeding</button>
+    <div class="progress hidden" id="progress">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+      </div>
+      <div class="progress-text" id="progress-text">Preparing...</div>
+    </div>
+    <div class="log hidden" id="seed-log"></div>
+  </div>
+</div>
+
+<script>
+let pb = null;
+let localData = {};
+
+// Preview local data
+function previewLocalData() {
+  const resultsDiv = document.getElementById('preview-results');
+  resultsDiv.classList.remove('hidden');
+
+  // Read all localStorage keys
+  localData = {
+    receipts: JSON.parse(localStorage.getItem('groceryReceipts_v2') || '[]'),
+    productMappings: JSON.parse(localStorage.getItem('customProductMappings_v2') || '{}'),
+    customCategories: JSON.parse(localStorage.getItem('customCategories_v2') || '[]'),
+    deletedCategories: JSON.parse(localStorage.getItem('deletedCategories_v2') || '[]'),
+    renamedCategories: JSON.parse(localStorage.getItem('renamedCategories_v2') || '{}'),
+    shoppingList: JSON.parse(localStorage.getItem('shoppingList_v2') || '[]'),
+    snoozedSuggestions: JSON.parse(localStorage.getItem('snoozedSuggestions_v2') || '{}'),
+    dismissedSuggestions: JSON.parse(localStorage.getItem('dismissedSuggestions_v2') || '{}'),
+    ignoredQualitySuggestions: JSON.parse(localStorage.getItem('ignoredQualitySuggestions') || '[]'),
+    allowedSectionCombinations: JSON.parse(localStorage.getItem('allowedSectionCombinations') || '[]'),
+    masterTagList: JSON.parse(localStorage.getItem('masterTagList') || '[]')
+  };
+
+  let html = '<div class="preview">';
+  html += '<h4>Data Found in localStorage:</h4>';
+
+  // Receipts
+  html += `<div class="preview-item"><strong>Receipts</strong> <span class="count">${localData.receipts.length}</span></div>`;
+
+  // Product Mappings
+  const mappingCount = Object.keys(localData.productMappings).length;
+  html += `<div class="preview-item"><strong>Product Mappings</strong> <span class="count">${mappingCount}</span></div>`;
+
+  // Categories
+  html += `<div class="preview-item"><strong>Custom Categories</strong> <span class="count">${localData.customCategories.length}</span></div>`;
+  html += `<div class="preview-item"><strong>Deleted Categories</strong> <span class="count">${localData.deletedCategories.length}</span></div>`;
+  html += `<div class="preview-item"><strong>Renamed Categories</strong> <span class="count">${Object.keys(localData.renamedCategories).length}</span></div>`;
+
+  // Shopping List
+  html += `<div class="preview-item"><strong>Shopping List Items</strong> <span class="count">${localData.shoppingList.length}</span></div>`;
+  html += `<div class="preview-item"><strong>Snoozed Suggestions</strong> <span class="count">${Object.keys(localData.snoozedSuggestions).length}</span></div>`;
+  html += `<div class="preview-item"><strong>Dismissed Suggestions</strong> <span class="count">${Object.keys(localData.dismissedSuggestions).length}</span></div>`;
+
+  // Settings
+  html += `<div class="preview-item"><strong>Ignored Quality Suggestions</strong> <span class="count">${localData.ignoredQualitySuggestions.length}</span></div>`;
+  html += `<div class="preview-item"><strong>Tags</strong> <span class="count">${localData.masterTagList.length}</span></div>`;
+
+  html += '</div>';
+
+  // Calculate totals
+  const totalItems = localData.receipts.reduce((sum, r) => sum + (r.items?.length || 0), 0);
+  const totalSpent = localData.receipts.reduce((sum, r) => sum + (r.total || 0), 0);
+
+  if (localData.receipts.length > 0) {
+    html += `<div class="status success">
+      <strong>Summary:</strong> ${localData.receipts.length} receipts with ${totalItems} items, total spent: ${totalSpent.toFixed(2)} kr
+    </div>`;
+  } else {
+    html += `<div class="status warning">
+      <strong>No receipts found!</strong> Make sure you're running this from the same browser where you use the parser.
+    </div>`;
+  }
+
+  resultsDiv.innerHTML = html;
+}
+
+// Login to PocketBase
+async function loginToPocketBase() {
+  const url = document.getElementById('pb-url').value;
+  const email = document.getElementById('pb-email').value;
+  const password = document.getElementById('pb-password').value;
+  const statusDiv = document.getElementById('login-status');
+
+  if (!email || !password) {
+    statusDiv.innerHTML = '<div class="status error">Please enter email and password</div>';
+    return;
+  }
+
+  try {
+    pb = new PocketBase(url);
+    const authData = await pb.collection('users').authWithPassword(email, password);
+
+    statusDiv.innerHTML = `<div class="status success">
+      Logged in as: <strong>${authData.record.email}</strong><br>
+      User ID: ${authData.record.id}
+    </div>`;
+
+    // Enable seed button
+    document.getElementById('seed-btn').disabled = false;
+  } catch (error) {
+    statusDiv.innerHTML = `<div class="status error">Login failed: ${error.message}</div>`;
+    pb = null;
+  }
+}
+
+// Log helper
+function log(message, type = 'info') {
+  const logDiv = document.getElementById('seed-log');
+  logDiv.classList.remove('hidden');
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+  logDiv.appendChild(entry);
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+// Update progress
+function updateProgress(percent, text) {
+  document.getElementById('progress').classList.remove('hidden');
+  document.getElementById('progress-fill').style.width = `${percent}%`;
+  document.getElementById('progress-text').textContent = text;
+}
+
+// Seed all data
+async function seedAllData() {
+  if (!pb || !pb.authStore.isValid) {
+    alert('Please login first!');
+    return;
+  }
+
+  const userId = pb.authStore.model.id;
+  document.getElementById('seed-btn').disabled = true;
+
+  log('Starting seed process...', 'info');
+  updateProgress(0, 'Starting...');
+
+  try {
+    // 1. Seed Receipts (40% of progress)
+    log(`Seeding ${localData.receipts.length} receipts...`);
+    let receiptCount = 0;
+    for (const receipt of localData.receipts) {
+      try {
+        await pb.collection('HSL_receipts').create({
+          user: userId,
+          store: receipt.store || 'Unknown',
+          date: receipt.date || new Date().toISOString(),
+          total: receipt.total || 0,
+          items: receipt.items || []
+        });
+        receiptCount++;
+        updateProgress((receiptCount / localData.receipts.length) * 40, `Receipts: ${receiptCount}/${localData.receipts.length}`);
+      } catch (e) {
+        log(`Error seeding receipt ${receipt.date}: ${e.message}`, 'error');
+      }
+    }
+    log(`Seeded ${receiptCount} receipts`, 'success');
+
+    // 2. Seed Product Mappings (30% of progress)
+    updateProgress(40, 'Seeding product mappings...');
+    const mappings = Object.entries(localData.productMappings);
+    log(`Seeding ${mappings.length} product mappings...`);
+    let mappingCount = 0;
+    for (const [productName, mapping] of mappings) {
+      try {
+        await pb.collection('HSL_product_mappings').create({
+          user: userId,
+          product_name: productName,
+          display_name: mapping.displayName || mapping.name || productName,
+          category: mapping.category || '',
+          tags: mapping.tags || []
+        });
+        mappingCount++;
+        updateProgress(40 + (mappingCount / mappings.length) * 30, `Mappings: ${mappingCount}/${mappings.length}`);
+      } catch (e) {
+        log(`Error seeding mapping ${productName}: ${e.message}`, 'error');
+      }
+    }
+    log(`Seeded ${mappingCount} product mappings`, 'success');
+
+    // 3. Seed Categories (10% of progress)
+    updateProgress(70, 'Seeding categories...');
+    log('Seeding categories...');
+    let categoryCount = 0;
+
+    // Custom categories
+    for (const cat of localData.customCategories) {
+      try {
+        await pb.collection('HSL_categories').create({
+          user: userId,
+          name: cat,
+          original_name: null,
+          is_deleted: false
+        });
+        categoryCount++;
+      } catch (e) {
+        log(`Error seeding category ${cat}: ${e.message}`, 'error');
+      }
+    }
+
+    // Deleted categories
+    for (const cat of localData.deletedCategories) {
+      try {
+        await pb.collection('HSL_categories').create({
+          user: userId,
+          name: cat,
+          original_name: null,
+          is_deleted: true
+        });
+        categoryCount++;
+      } catch (e) {
+        log(`Error seeding deleted category ${cat}: ${e.message}`, 'error');
+      }
+    }
+
+    // Renamed categories
+    for (const [original, newName] of Object.entries(localData.renamedCategories)) {
+      try {
+        await pb.collection('HSL_categories').create({
+          user: userId,
+          name: newName,
+          original_name: original,
+          is_deleted: false
+        });
+        categoryCount++;
+      } catch (e) {
+        log(`Error seeding renamed category ${original}: ${e.message}`, 'error');
+      }
+    }
+    log(`Seeded ${categoryCount} categories`, 'success');
+    updateProgress(80, 'Seeding shopping list...');
+
+    // 4. Seed Shopping List (10% of progress)
+    log('Seeding shopping list...');
+    let shoppingCount = 0;
+    for (const item of localData.shoppingList) {
+      try {
+        await pb.collection('HSL_shopping_list').create({
+          user: userId,
+          product_name: item.name || item.product_name,
+          promotion_price: item.promotionPrice || null,
+          regular_price: item.price || item.regular_price || null,
+          savings: item.savings || null,
+          urgency: item.urgency || null,
+          frequency: item.frequency || null,
+          is_snoozed: false,
+          is_dismissed: false,
+          snooze_until: null
+        });
+        shoppingCount++;
+      } catch (e) {
+        log(`Error seeding shopping item: ${e.message}`, 'error');
+      }
+    }
+    log(`Seeded ${shoppingCount} shopping list items`, 'success');
+    updateProgress(90, 'Seeding settings...');
+
+    // 5. Seed Settings (10% of progress)
+    log('Seeding settings...');
+    try {
+      await pb.collection('HSL_settings').create({
+        user: userId,
+        dismissed_suggestions: Object.keys(localData.dismissedSuggestions),
+        ignored_quality_suggestions: localData.ignoredQualitySuggestions,
+        allowed_section_combinations: localData.allowedSectionCombinations
+      });
+      log('Seeded settings', 'success');
+    } catch (e) {
+      log(`Error seeding settings: ${e.message}`, 'error');
+    }
+
+    updateProgress(100, 'Complete!');
+    log('Seed process complete!', 'success');
+
+    // Show success message
+    document.getElementById('step3').innerHTML += `
+      <div class="status success" style="margin-top: 20px;">
+        <strong>Migration Complete!</strong><br><br>
+        Your data has been seeded to PocketBase. You can now use the parser from any device by logging in with your account.
+      </div>
+    `;
+
+  } catch (error) {
+    log(`Fatal error: ${error.message}`, 'error');
+    updateProgress(0, 'Error occurred');
+    document.getElementById('seed-btn').disabled = false;
+  }
+}
+</script>
+</body>
+</html>
