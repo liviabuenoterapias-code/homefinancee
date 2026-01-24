@@ -1,10 +1,24 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-let allReceipts = [];
+// Use window.allReceipts so cloud-bootstrap can set it before this script runs
+// and displayAllReceipts() will see the cloud data
+if (!window.allReceipts) {
+  window.allReceipts = [];
+}
+// Create local reference for backward compatibility
+var allReceipts = window.allReceipts;
 let receiptsVersion = 0; // Increment when receipts change to invalidate caches
 let cachedSuggestions = null; // Cache for shopping list suggestions
 
 window.addEventListener('load', () => {
+  // In cloud mode, data is already loaded by cloud-bootstrap.js
+  if (window.CLOUD_MODE && window.allReceipts && window.allReceipts.length > 0) {
+    allReceipts = window.allReceipts;
+    console.log('[Main] Using cloud data:', allReceipts.length, 'receipts');
+    return; // Cloud mode handles display in index.html
+  }
+
+  // Local mode: load from localStorage
   const saved = localStorage.getItem('groceryReceipts_v2');
   if (saved) {
     allReceipts = JSON.parse(saved);
@@ -508,7 +522,42 @@ function enrichItemsFromLibrary(receipt) {
   });
 }
 
+// Helper to format receipt date/time for display
+function formatReceiptDateTime(dateStr, timeStr) {
+  if (!dateStr) return '';
+
+  // If date contains ISO timestamp or space-separated datetime
+  if (dateStr.includes('T') || (dateStr.includes(' ') && dateStr.includes(':'))) {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      // Format as YYYY-MM-DD HH:MM
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const mins = String(d.getMinutes()).padStart(2, '0');
+      // Only show time if it's not midnight
+      if (hours === '00' && mins === '00' && timeStr && timeStr !== 'undefined') {
+        return `${year}-${month}-${day} ${timeStr}`;
+      }
+      return `${year}-${month}-${day} ${hours}:${mins}`;
+    }
+  }
+
+  // Simple date with separate time
+  if (timeStr && timeStr !== 'undefined' && timeStr !== '') {
+    return `${dateStr} ${timeStr}`;
+  }
+
+  return dateStr;
+}
+
 function displayAllReceipts() {
+  // In cloud mode, use window.allReceipts which is set by cloud-bootstrap
+  if (window.CLOUD_MODE && window.allReceipts) {
+    allReceipts = window.allReceipts;
+  }
+
   if (allReceipts.length === 0) {
     document.getElementById('stats').style.display = 'none';
     document.getElementById('receipts').innerHTML = '';
@@ -517,9 +566,26 @@ function displayAllReceipts() {
 
   // Sort by date/time (newest first)
   allReceipts.sort((a, b) => {
-    const dateA = new Date(a.date + ' ' + a.time);
-    const dateB = new Date(b.date + ' ' + b.time);
-    return dateB - dateA;
+    // Helper to parse date robustly
+    const parseDate = (dateStr, timeStr) => {
+      if (!dateStr) return new Date(0);
+      // If date already contains time info (ISO format or space-separated), use it directly
+      if (dateStr.includes('T') || (dateStr.includes(' ') && dateStr.includes(':'))) {
+        return new Date(dateStr);
+      }
+      // Otherwise combine date and time if available
+      const combined = timeStr && timeStr !== 'undefined' ? `${dateStr} ${timeStr}` : dateStr;
+      return new Date(combined);
+    };
+
+    const dateA = parseDate(a.date, a.time);
+    const dateB = parseDate(b.date, b.time);
+
+    // Handle Invalid Date by treating as oldest
+    const timeA = isNaN(dateA.getTime()) ? 0 : dateA.getTime();
+    const timeB = isNaN(dateB.getTime()) ? 0 : dateB.getTime();
+
+    return timeB - timeA;
   });
 
   // Update stats
@@ -553,7 +619,7 @@ function displayAllReceipts() {
         <div class="receipt-info">
           <div class="receipt-date">
             <span class="receipt-collapse-indicator collapsed" id="collapse-indicator-${index}">▼</span>
-            ${receipt.date} ${receipt.time}
+            ${formatReceiptDateTime(receipt.date, receipt.time)}
           </div>
           <div class="receipt-store">Med ${receipt.store} har du sparat: ${receipt.totalDiscount.toFixed(2)} • ${productCount} products (${totalItemCount} items)</div>
         </div>
@@ -717,7 +783,7 @@ function showMessage(msg, type) {
   }, 5000);
 }
 
-// Tab switching function
+// Tab switching function with lazy loading
 function switchTab(tabName) {
   // Hide all tabs
   document.querySelectorAll('.tab-content').forEach(tab => {
@@ -735,22 +801,36 @@ function switchTab(tabName) {
   // Activate button
   event.target.classList.add('active');
 
-  // If switching to analysis, refresh it
-  if (tabName === 'analysis') {
-    refreshAnalysis();
+  // Lazy loading: render tab content on first access
+  const tabsRendered = window.tabsRendered || {};
+
+  if (tabName === 'parser' && !tabsRendered['parser']) {
+    console.log('[Lazy] Rendering receipts tab...');
+    if (typeof displayAllReceipts === 'function' && allReceipts.length > 0) {
+      displayAllReceipts();
+    }
+    window.tabsRendered['parser'] = true;
   }
 
-  // If switching to products, refresh product library
-  if (tabName === 'products') {
-    if (allReceipts.length > 0) {
+  if (tabName === 'analysis' && !tabsRendered['analysis']) {
+    console.log('[Lazy] Rendering analysis tab...');
+    if (typeof refreshAnalysis === 'function') {
+      refreshAnalysis();
+    }
+    window.tabsRendered['analysis'] = true;
+  }
+
+  if (tabName === 'products' && !tabsRendered['products']) {
+    console.log('[Lazy] Rendering product library tab...');
+    if (typeof renderProductLibrary === 'function' && allReceipts.length > 0) {
       renderProductLibrary();
     }
+    window.tabsRendered['products'] = true;
   }
 
-  // If switching to shopping list, refresh suggestions and list
+  // Shopping list: just refresh the list (suggestions are manual now)
   if (tabName === 'shopping-list') {
-    if (allReceipts.length > 0) {
-      generateSuggestions();
+    if (typeof renderShoppingList === 'function') {
       renderShoppingList();
     }
   }
@@ -3831,12 +3911,12 @@ function exportCustomData() {
 }
 
 // Import custom data from JSON file
-function importCustomData(event) {
+async function importCustomData(event) {
   const file = event.target.files[0];
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const importData = JSON.parse(e.target.result);
 
@@ -3857,12 +3937,34 @@ function importCustomData(event) {
       // Merge custom mappings (imported data takes precedence)
       const currentMappings = loadCustomMappings();
       const mergedMappings = { ...currentMappings, ...importData.customProductMappings };
-      localStorage.setItem('customProductMappings_v2', JSON.stringify(mergedMappings));
+
+      // In cloud mode, save to PocketBase; otherwise use localStorage
+      if (window.CLOUD_MODE) {
+        console.log('[Import] Cloud mode detected, saving to PocketBase...');
+        // Update window.customMappings so it's immediately available
+        window.customMappings = mergedMappings;
+        // Save to PocketBase (this is async)
+        await saveCustomMappings(mergedMappings);
+        console.log('[Import] Saved', mappingsCount, 'mappings to PocketBase');
+      } else {
+        localStorage.setItem('customProductMappings_v2', JSON.stringify(mergedMappings));
+      }
 
       // Merge custom categories (avoid duplicates)
       const currentCategories = loadCustomCategories();
       const allCategories = [...new Set([...currentCategories, ...importData.customCategories])];
-      localStorage.setItem('customCategories_v2', JSON.stringify(allCategories));
+
+      if (window.CLOUD_MODE) {
+        window.customCategories = allCategories;
+        await saveCustomCategories(allCategories);
+      } else {
+        localStorage.setItem('customCategories_v2', JSON.stringify(allCategories));
+      }
+
+      // Clear the product library cache so it rebuilds with new data
+      if (typeof productLibraryCache !== 'undefined') {
+        productLibraryCache = null;
+      }
 
       // Refresh the display
       if (allReceipts.length > 0) {
@@ -5714,13 +5816,34 @@ const STORE_CATEGORIES = [
 
 // Load shopping list from localStorage
 function loadShoppingList() {
-  const saved = localStorage.getItem('shoppingList_v2');
-  return saved ? JSON.parse(saved) : [];
+  try {
+    const saved = localStorage.getItem('shoppingList_v2');
+    if (!saved) return [];
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.error('Error loading shopping list:', e);
+    return [];
+  }
 }
 
-// Save shopping list to localStorage
+// Save shopping list to localStorage with backup protection
 function saveShoppingList(list) {
-  localStorage.setItem('shoppingList_v2', JSON.stringify(list));
+  try {
+    // Safety check: don't overwrite a non-empty list with an empty one accidentally
+    const current = localStorage.getItem('shoppingList_v2');
+    if (current) {
+      const currentList = JSON.parse(current);
+      // If we had items and now have none, create a backup first
+      if (Array.isArray(currentList) && currentList.length > 0 && (!list || list.length === 0)) {
+        console.warn('⚠️ Saving empty list when previous had items - creating backup');
+        localStorage.setItem('shoppingList_v2_backup', current);
+      }
+    }
+    localStorage.setItem('shoppingList_v2', JSON.stringify(list || []));
+  } catch (e) {
+    console.error('Error saving shopping list:', e);
+  }
 }
 
 // v3.0: Price rounding function - always rounds UP to .00 or .50
@@ -5833,8 +5956,10 @@ function generateSuggestions() {
       const productName = mapping.productName || standardName;
 
       const brand = mapping.brand || '';
-      const productType = mapping.productType || '';
-      const storeSection = mapping.storeSection || '';
+      // Get productType from mapping, or derive from ProductCategories
+      const productType = mapping.productType || window.ProductCategories.getCategory(productName);
+      // Get storeSection from mapping, or derive from productType
+      const storeSection = mapping.storeSection || mapProductTypeToStoreSection(productType);
 
       if (!groupedProducts[productName]) {
         groupedProducts[productName] = {
@@ -6379,22 +6504,50 @@ function renderShoppingList() {
   uncheckedList.forEach(item => {
     // v3.0: Look up current category from Product Library
     // Try to find matching product in customMappings by name
-    let currentCategory = item.category; // default to stored category
+    let currentCategory = item.category || 'skafferi'; // default to stored category or skafferi
 
-    // Search through all receipt names to find one that maps to this product
-    const matchingMapping = Object.entries(customMappings).find(([receiptName, mapping]) => {
-      const mappedName = mapping.productName || window.ProductCategories.standardizeProduct(receiptName);
-      return mappedName.toLowerCase() === item.name.toLowerCase();
-    });
+    try {
+      // Search through all receipt names to find one that maps to this product
+      const matchingMapping = Object.entries(customMappings).find(([receiptName, mapping]) => {
+        const mappedName = mapping.productName || (window.ProductCategories && window.ProductCategories.standardizeProduct ? window.ProductCategories.standardizeProduct(receiptName) : receiptName);
+        return mappedName.toLowerCase() === item.name.toLowerCase();
+      });
 
-    if (matchingMapping && matchingMapping[1].storeSection) {
-      currentCategory = matchingMapping[1].storeSection;
+      if (matchingMapping) {
+        const mapping = matchingMapping[1];
+        // Get storeSection from mapping, or derive from productType
+        if (mapping.storeSection) {
+          currentCategory = mapping.storeSection;
+        } else if (mapping.productType && typeof mapProductTypeToStoreSection === 'function') {
+          currentCategory = mapProductTypeToStoreSection(mapping.productType);
+        } else if (window.ProductCategories && window.ProductCategories.getCategory) {
+          // Derive from ProductCategories if no mapping data
+          const derivedType = window.ProductCategories.getCategory(item.name);
+          if (typeof mapProductTypeToStoreSection === 'function') {
+            currentCategory = mapProductTypeToStoreSection(derivedType);
+          }
+        }
 
-      // Update stored category if it changed
-      if (item.category !== currentCategory) {
-        item.category = currentCategory;
-        needsUpdate = true;
+        // Update stored category if it changed
+        if (item.category !== currentCategory) {
+          item.category = currentCategory;
+          needsUpdate = true;
+        }
+      } else if (!currentCategory || !STORE_CATEGORIES.find(c => c.id === currentCategory)) {
+        // No matching mapping and invalid/missing category - derive from ProductCategories
+        if (window.ProductCategories && window.ProductCategories.getCategory && typeof mapProductTypeToStoreSection === 'function') {
+          const derivedType = window.ProductCategories.getCategory(item.name);
+          currentCategory = mapProductTypeToStoreSection(derivedType);
+          if (item.category !== currentCategory) {
+            item.category = currentCategory;
+            needsUpdate = true;
+          }
+        }
       }
+    } catch (e) {
+      console.error('Error deriving category for item:', item.name, e);
+      // Keep using the existing category or default
+      currentCategory = item.category || 'skafferi';
     }
 
     if (grouped[currentCategory]) {
@@ -6482,18 +6635,21 @@ function renderShoppingList() {
 }
 
 // Toggle item checked state
-function toggleItem(itemId) {
+async function toggleItem(itemId) {
   const list = loadShoppingList();
   const item = list.find(i => i.id === itemId);
   if (item) {
     item.checked = !item.checked;
-    saveShoppingList(list);
+    // Update local state first for immediate UI feedback
+    window.shoppingList = list;
     renderShoppingList();
+    // Then save to PocketBase (don't await to avoid UI blocking)
+    saveShoppingList(list);
   }
 }
 
 // Update item quantity
-function updateQuantity(itemId, change) {
+async function updateQuantity(itemId, change) {
   const list = loadShoppingList();
   const item = list.find(i => i.id === itemId);
   if (item) {
@@ -6503,8 +6659,11 @@ function updateQuantity(itemId, change) {
       return;
     }
     item.quantity = newQuantity;
-    saveShoppingList(list);
+    // Update local state first for immediate UI feedback
+    window.shoppingList = list;
     renderShoppingList();
+    // Then save to PocketBase
+    saveShoppingList(list);
   }
 }
 
@@ -7108,8 +7267,10 @@ function addManualItem() {
       const standardName = window.ProductCategories.standardizeProduct(item.name);
       const mapping = customMappings[item.name] || {};
       const productName = mapping.productName || standardName;
-      const storeSection = mapping.storeSection || '';
-      const productType = mapping.productType || '';
+      // Get productType from mapping, or derive from ProductCategories
+      const productType = mapping.productType || window.ProductCategories.getCategory(productName);
+      // Get storeSection from mapping, or derive from productType
+      const storeSection = mapping.storeSection || mapProductTypeToStoreSection(productType);
 
       const unitPrice = item.totalPrice / (item.quantity || 1);
       const receiptDate = new Date(receipt.date);
