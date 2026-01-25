@@ -5856,25 +5856,43 @@ function roundPriceUp(price) {
   return whole + 0.50; // Round to .50
 }
 
-// v3.0: Load snoozed suggestions from localStorage
+// v3.0: Load snoozed suggestions - uses cloud if available
 function loadSnoozedSuggestions() {
+  // In cloud mode, use the window version (overridden by cloud-bootstrap)
+  if (window.CLOUD_MODE && window.snoozedSuggestions !== undefined) {
+    return window.snoozedSuggestions || {};
+  }
   const saved = localStorage.getItem('snoozedSuggestions_v2');
   return saved ? JSON.parse(saved) : {};
 }
 
-// v3.0: Save snoozed suggestions to localStorage
+// v3.0: Save snoozed suggestions - uses cloud if available
 function saveSnoozedSuggestions(snoozed) {
+  // In cloud mode, use the window version (overridden by cloud-bootstrap)
+  if (window.CLOUD_MODE && typeof window.saveSnoozedSuggestions === 'function' && window.saveSnoozedSuggestions !== saveSnoozedSuggestions) {
+    window.saveSnoozedSuggestions(snoozed);
+    return;
+  }
   localStorage.setItem('snoozedSuggestions_v2', JSON.stringify(snoozed));
 }
 
-// v3.0: Load dismissed suggestions with new format
+// v3.0: Load dismissed suggestions with new format - uses cloud if available
 function loadDismissedSuggestionsV3() {
+  // In cloud mode, use the window version (overridden by cloud-bootstrap)
+  if (window.CLOUD_MODE && window.dismissedSuggestions !== undefined) {
+    return window.dismissedSuggestions || {};
+  }
   const saved = localStorage.getItem('dismissedSuggestions_v2');
   return saved ? JSON.parse(saved) : {};
 }
 
-// v3.0: Save dismissed suggestions with new format
+// v3.0: Save dismissed suggestions with new format - uses cloud if available
 function saveDismissedSuggestionsV3(dismissed) {
+  // In cloud mode, use the window version (overridden by cloud-bootstrap)
+  if (window.CLOUD_MODE && typeof window.saveDismissedSuggestionsV3 === 'function' && window.saveDismissedSuggestionsV3 !== saveDismissedSuggestionsV3) {
+    window.saveDismissedSuggestionsV3(dismissed);
+    return;
+  }
   localStorage.setItem('dismissedSuggestions_v2', JSON.stringify(dismissed));
 }
 
