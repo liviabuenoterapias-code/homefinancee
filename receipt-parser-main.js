@@ -5868,9 +5868,11 @@ function loadSnoozedSuggestions() {
 
 // v3.0: Save snoozed suggestions - uses cloud if available
 function saveSnoozedSuggestions(snoozed) {
-  // In cloud mode, use the window version (overridden by cloud-bootstrap)
-  if (window.CLOUD_MODE && typeof window.saveSnoozedSuggestions === 'function' && window.saveSnoozedSuggestions !== saveSnoozedSuggestions) {
-    window.saveSnoozedSuggestions(snoozed);
+  console.log('[Snooze] saveSnoozedSuggestions called, CLOUD_MODE:', window.CLOUD_MODE);
+  // In cloud mode, use the cloud save function
+  if (window.CLOUD_MODE) {
+    console.log('[Snooze] Using cloud save...');
+    window.cloudSaveSnoozedSuggestions(snoozed);
     return;
   }
   localStorage.setItem('snoozedSuggestions_v2', JSON.stringify(snoozed));
@@ -5888,9 +5890,11 @@ function loadDismissedSuggestionsV3() {
 
 // v3.0: Save dismissed suggestions with new format - uses cloud if available
 function saveDismissedSuggestionsV3(dismissed) {
-  // In cloud mode, use the window version (overridden by cloud-bootstrap)
-  if (window.CLOUD_MODE && typeof window.saveDismissedSuggestionsV3 === 'function' && window.saveDismissedSuggestionsV3 !== saveDismissedSuggestionsV3) {
-    window.saveDismissedSuggestionsV3(dismissed);
+  console.log('[Dismiss] saveDismissedSuggestionsV3 called, CLOUD_MODE:', window.CLOUD_MODE);
+  // In cloud mode, use the cloud save function
+  if (window.CLOUD_MODE) {
+    console.log('[Dismiss] Using cloud save...');
+    window.cloudSaveDismissedSuggestions(dismissed);
     return;
   }
   localStorage.setItem('dismissedSuggestions_v2', JSON.stringify(dismissed));
